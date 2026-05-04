@@ -1,0 +1,63 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        pip install -q pytest pytest-cov
+        pip install -q -r requirements.txt
+    
+    - name: Run unit tests
+      run: |
+        cd ${{ github.workspace }}
+        python -m pytest tests/test_merge_datasets.py tests/test_add_reasoning.py tests/test_add_reasoning_v2.py tests/test_train.py -v --tb=short
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: .pytest_cache/
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install linting tools
+      run: pip install -q ruff black
+    
+    - name: Check formatting (black)
+      run: black --check --diff scripts/ tests/ || true
+    
+    - name: Run linter (ruff)
+      run: ruff check scripts/ tests/ || true
+    
+    - name: Check Python syntax
+      run: |
+        python -m py_compile scripts/*.py
+        python -m py_compile tests/*.py

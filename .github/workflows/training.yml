@@ -1,0 +1,101 @@
+name: Training
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Base model'
+        required: false
+        default: 'mistralai/Mistral-7B-Instruct-v0.3'
+      dataset:
+        description: 'Training dataset'
+        required: false
+        default: 'data/cot_final.jsonl'
+      epochs:
+        description: 'Training epochs'
+        required: false
+        default: '3'
+      batch_size:
+        description: 'Batch size'
+        required: false
+        default: '4'
+      prompt_style:
+        description: 'Prompt style'
+        required: false
+        type: choice
+        default: 'cot'
+        options:
+          - inst
+          - chat
+          - cot
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GH_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        pip install -q torch --index-url https://download.pytorch.org/whl/rocm6.1
+        pip install -q transformers accelerate peft datasets sentencepiece
+    
+    - name: Run training
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      run: |
+        cd ${{ github.workspace }}
+        python scripts/train.py \
+          --model "${{ github.event.inputs.model }}" \
+          --dataset "${{ github.event.inputs.dataset }}" \
+          --output ./fine-tuned-model \
+          --epochs ${{ github.event.inputs.epochs }} \
+          --batch-size ${{ github.event.inputs.batch_size }} \
+          --prompt-style ${{ github.event.inputs.prompt_style }}
+    
+    - name: Upload model
+      uses: actions/upload-artifact@v4
+      with:
+        name: fine-tuned-model
+        path: fine-tuned-model/
+        retention-days: 30
+    
+    - name: Upload training logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: training-logs
+        path: |
+          fine-tuned-model/trainer_state.json
+          *.log
+        retention-days: 30
+    
+    - name: Create release (if tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: fine-tuned-model/
+        draft: true
+    
+    - name: Summary
+      run: |
+        echo "## Training Complete"
+        echo ""
+        echo "| Parameter | Value |"
+        echo "|---------|-------|"
+        echo "| Model | ${{ github.event.inputs.model }} |"
+        echo "| Dataset | ${{ github.event.inputs.dataset }} |"
+        echo "| Epochs | ${{ github.event.inputs.epochs }} |"
+        echo "| Batch Size | ${{ github.event.inputs.batch_size }} |"
+        echo ""
+        echo "Model saved to: fine-tuned-model/"

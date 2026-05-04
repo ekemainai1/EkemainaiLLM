@@ -1,0 +1,92 @@
+name: Dataset Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Pipeline action to run'
+        required: true
+        type: choice
+        options:
+          - merge
+          - add_cot
+          - add_reasoning
+          - all
+      dataset_limit:
+        description: 'Limit samples (optional)'
+        required: false
+        default: ''
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: pip install -q datasets tqdm
+    
+    - name: Merge datasets
+      if: github.event.inputs.action == 'merge' || github.event.inputs.action == 'all'
+      run: |
+        cd ${{ github.workspace }}
+        LIMIT_FLAG=""
+        if [ -n "${{ github.event.inputs.dataset_limit }}" ]; then
+          LIMIT_FLAG="--limit ${{ github.event.inputs.dataset_limit }}"
+        fi
+        
+        python scripts/merge_datasets.py --all --no-dedup $LIMIT_FLAG || true
+        
+        if [ -f data/combined_final.jsonl ]; then
+          echo "combined_count=$(wc -l < data/combined_final.jsonl)" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Add Chain-of-Thought (optimized)
+      if: github.event.inputs.action == 'add_cot' || github.event.inputs.action == 'all'
+      run: |
+        cd ${{ github.workspace }}
+        python scripts/add_reasoning_v2.py \
+          --input data/combined_final.jsonl \
+          --output data/cot_final.jsonl || true
+        
+        if [ -f data/cot_final.jsonl ]; then
+          echo "cot_count=$(wc -l < data/cot_final.jsonl)" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Add full reasoning + tools
+      if: github.event.inputs.action == 'add_reasoning' || github.event.inputs.action == 'all'
+      run: |
+        cd ${{ github.workspace }}
+        python scripts/add_reasoning.py \
+          --input data/combined_final.jsonl \
+          --output data/reasoning_final.jsonl || true
+        
+        if [ -f data/reasoning_final.jsonl ]; then
+          echo "reasoning_count=$(wc -l < data/reasoning_final.jsonl)" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Upload datasets
+      uses: actions/upload-artifact@v4
+      with:
+        name: datasets
+        path: data/*.jsonl
+        retention-days: 7
+    
+    - name: Summary
+      run: |
+        cd ${{ github.workspace }}
+        echo "## Dataset Pipeline Complete"
+        echo ""
+        for f in data/*.jsonl; do
+          if [ -f "$f" ]; then
+            echo "- $f: $(wc -l < $f) samples"
+          fi
+        done

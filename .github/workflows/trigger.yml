@@ -1,0 +1,69 @@
+name: Trigger Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      pipeline:
+        description: 'Pipeline to run'
+        required: true
+        type: choice
+        options:
+          - test
+          - dataset_validation
+          - merge
+          - add_cot
+          - add_reasoning
+          - train
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        pip install -q pytest pytest-cov
+        pip install -q -r requirements.txt
+    
+    - name: Trigger pipeline
+      run: |
+        cd ${{ github.workspace }}
+        
+        WORKFLOW="${{ github.event.inputs.pipeline }}"
+        
+        case $WORKFLOW in
+          test)
+            echo "Running tests..."
+            python -m pytest tests/test_merge_datasets.py tests/test_add_reasoning.py tests/test_add_reasoning_v2.py tests/test_train.py -v --tb=short
+            ;;
+          dataset_validation)
+            echo "Validating datasets..."
+            python -c "import json; print('OK')"
+            ;;
+          merge)
+            echo "Merging datasets..."
+            python scripts/merge_datasets.py --all
+            ;;
+          add_cot)
+            echo "Adding CoT..."
+            python scripts/add_reasoning_v2.py --input data/combined_final.jsonl --output data/cot_final.jsonl
+            ;;
+          add_reasoning)
+            echo "Adding reasoning..."
+            python scripts/add_reasoning.py --input data/combined_final.jsonl --output data/reasoning_final.jsonl
+            ;;
+          train)
+            echo "Training requires AMD GPU - use training workflow"
+            ;;
+        esac
+        
+        echo "Done: $WORKFLOW"

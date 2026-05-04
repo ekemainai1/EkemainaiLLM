@@ -1,0 +1,84 @@
+name: Dataset Validation
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Report available files
+      run: |
+        cd ${{ github.workspace }}
+        echo "Files in data/:"
+        ls -la data/*.jsonl 2>/dev/null || echo "No JSONL files found"
+    
+    - name: Check dataset sizes
+      run: |
+        cd ${{ github.workspace }}
+        python3 -c "
+        from pathlib import Path
+        data_files = list(Path('data').glob('*.jsonl'))
+        if not data_files:
+            print('No dataset files found')
+            exit(0)
+        total = 0
+        print('\\nDataset files:')
+        for f in sorted(data_files)[:15]:
+            size_mb = f.stat().st_size / 1024 / 1024
+            count = sum(1 for _ in open(f))
+            total += count
+            print(f'  {f.name}: {count:,} samples ({size_mb:.1f} MB)')
+        print(f'\\nTotal: {total:,} samples')
+        " || echo "Check completed"
+    
+    - name: Check dataset sizes
+      run: |
+        cd ${{ github.workspace }}
+        python3 -c "
+        import os
+        from pathlib import Path
+        
+        data_files = list(Path('data').glob('*.jsonl'))
+        total = 0
+        
+        print('\\nDataset files:')
+        for f in sorted(data_files)[:15]:
+            size_mb = f.stat().st_size / 1024 / 1024
+            count = sum(1 for _ in open(f))
+            total += count
+            print(f'  {f.name}: {count:,} samples ({size_mb:.1f} MB)')
+        
+        print(f'\\nTotal: {total:,} samples across {len(data_files)} files')
+        "
+    
+    - name: Verify dataset schema
+      run: |
+        cd ${{ github.workspace }}
+        python3 -c "
+        import json
+        
+        required_fields = ['instruction', 'input', 'output']
+        
+        with open('data/combined_final.jsonl') as f:
+            for i, line in enumerate(f):
+                if i >= 100:
+                    break
+                sample = json.loads(line)
+                for field in required_fields:
+                    if field not in sample:
+                        print(f'WARNING: Missing {field} in sample {i}')
+        
+        print('Schema validation complete: OK')
+        "

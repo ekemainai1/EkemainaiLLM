@@ -1,0 +1,17 @@
+torch
+transformers
+accelerate
+peft
+datasets
+optimum
+sentencepiece
+sentence-transformers
+faiss-cpu
+#vllm
+fastapi
+uvicorn
+gradio
+requests
+tqdm
+bitsandbytes
+scikit-learn

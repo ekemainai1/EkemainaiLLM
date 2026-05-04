@@ -1,0 +1,39 @@
+# Environment
+.env
+.env. local
+.env.*
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+# Data
+#data/*.jsonl
+#data/*.parquet
+#data/codesea/
+data/combined_final.jsonl
+data/codealpaca_reasoning.jsonl
+data/cot_final.jsonl
+data/reasoning_final.jsonl
+data/combined.jsonl
+# Models
+fine- tuned-*/
+model/
+vllm-*/
+tuned-*/
+fine-tuning/
+# Logs
+*.log
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+# OS
+.DS_Store
+Thumbs.db
+# Temporary
+/tmp/
+*.tmp

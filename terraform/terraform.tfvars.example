@@ -1,0 +1,17 @@
+# terraform/terraform.tfvars
+# Copy this file and fill in your values
+
+# DigitalOcean API token (create at: https://cloud.digitalocean.com/profile/api_tokens)
+do_token = "your-digitalocean-token"
+
+# SSH key fingerprint (get with: doctl compute ssh-key list)
+ssh_key_fingerprint = "your-ssh-key-fingerprint"
+
+# Region (nyc3, sgp1, ams3, blr1, lon1, tor1)
+region = "nyc3"
+
+# Enable 8-GPU cluster node (costs ~$16/hr)
+enable_cluster = false
+
+# Enable attached volume for datasets
+enable_volume = false
