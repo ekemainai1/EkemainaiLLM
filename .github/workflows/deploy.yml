@@ -1,0 +1,299 @@
+name: Full Deployment Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Base model'
+        required: false
+        default: 'mistralai/Mistral-7B-Instruct-v0.3'
+      dataset_action:
+        description: 'Dataset action'
+        required: false
+        type: choice
+        default: 'all'
+        options:
+          - merge
+          - add_cot
+          - add_reasoning
+          - all
+          - skip
+      epochs:
+        description: 'Training epochs'
+        required: false
+        default: '3'
+      batch_size:
+        description: 'Batch size'
+        required: false
+        default: '4'
+      provision_infra:
+        description: 'Provision GPU infrastructure'
+        required: false
+        type: boolean
+        default: true
+      run_tests:
+        description: 'Run tests first'
+        required: false
+        type: boolean
+        default: true
+      skip_training:
+        description: 'Skip training (provision only)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: ${{ github.event.inputs.run_tests == 'true' }}
+    name: Run Tests
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    outputs:
+      status: ${{ job.status }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        pip install -q pytest pytest-cov
+        pip install -q -r requirements.txt
+    
+    - name: Run unit tests
+      run: |
+        cd ${{ github.workspace }}
+        python -m pytest tests/test_merge_datasets.py tests/test_add_reasoning.py tests/test_add_reasoning_v2.py tests/test_train.py -v --tb=short
+    
+    - name: Lint
+      run: |
+        pip install -q ruff
+        ruff check scripts/ tests/ || true
+
+  dataset:
+    name: Generate Dataset
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ github.event.inputs.run_tests == 'true' && needs.test.result == 'success' }}
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    outputs:
+      dataset_path: ${{ steps.pipeline.outputs.dataset_path }}
+      dataset_count: ${{ steps.pipeline.outputs.dataset_count }}
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GH_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: pip install -q datasets tqdm
+    
+    - name: Run dataset pipeline
+      id: pipeline
+      run: |
+        cd ${{ github.workspace }}
+        
+        if [ "${{ github.event.inputs.dataset_action }}" == "skip" ]; then
+          echo "Skipping dataset generation"
+          echo "dataset_path=data/cot_final.jsonl" >> $GITHUB_OUTPUT
+          echo "dataset_count=256542" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        python scripts/merge_datasets.py --all --no-dedup || true
+        
+        if [ "${{ github.event.inputs.dataset_action }}" == "merge" ]; then
+          echo "dataset_path=data/combined_final.jsonl" >> $GITHUB_OUTPUT
+          echo "dataset_count=$(wc -l < data/combined_final.jsonl)" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        python scripts/add_reasoning_v2.py \
+          --input data/combined_final.jsonl \
+          --output data/cot_final.jsonl || true
+        
+        if [ "${{ github.event.inputs.dataset_action }}" == "add_cot" ]; then
+          echo "dataset_path=data/cot_final.jsonl" >> $GITHUB_OUTPUT
+          echo "dataset_count=$(wc -l < data/cot_final.jsonl)" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        python scripts/add_reasoning.py \
+          --input data/combined_final.jsonl \
+          --output data/reasoning_final.jsonl || true
+        
+        echo "dataset_path=data/cot_final.jsonl" >> $GITHUB_OUTPUT
+        echo "dataset_count=$(wc -l < data/cot_final.jsonl)" >> $GITHUB_OUTPUT
+    
+    - name: Upload datasets
+      uses: actions/upload-artifact@v4
+      with:
+        name: datasets
+        path: data/*.jsonl
+        retention-days: 7
+
+  provision:
+    name: Provision Infrastructure
+    runs-on: ubuntu-latest
+    needs: [test, dataset]
+    if: ${{ github.event.inputs.provision_infra == 'true' && (github.event.inputs.run_tests != 'true' || needs.test.result == 'success') }}
+    environment: infrastructure
+    permissions:
+      contents: write
+    env:
+      TF_VERSION: '1.7.0'
+      DO_TOKEN: ${{ secrets.DO_TOKEN }}
+      SSH_KEY_FINGERPRINT: ${{ secrets.SSH_KEY_FINGERPRINT }}
+    outputs:
+      droplet_ip: ${{ steps.outputs.outputs.droplet_ip }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        sparse-checkout: |
+          terraform/
+        sparse-checkout-cone-mode: false
+    
+    - name: Download Terraform
+      run: |
+        wget -q https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+        unzip -q terraform_${TF_VERSION}_linux_amd64.zip
+        mv terraform /usr/local/bin/
+    
+    - name: Create terraform.tfvars
+      run: |
+        cd terraform
+        cat > terraform.tfvars << EOF
+        do_token = "$DO_TOKEN"
+        ssh_key_fingerprint = "$SSH_KEY_FINGERPRINT"
+        region = "nyc3"
+        enable_cluster = false
+        enable_volume = false
+        EOF
+    
+    - name: Terraform Init
+      run: cd terraform && terraform init -upgrade
+    
+    - name: Terraform Apply
+      run: cd terraform && terraform apply -var-file=terraform.tfvars -auto-approve
+    
+    - name: Get Outputs
+      id: outputs
+      run: |
+        cd terraform
+        echo "droplet_ip=$(terraform output -raw droplet_ip)" >> $GITHUB_OUTPUT
+
+    - name: Store droplet IP for next job
+      run: |
+        echo "${{ steps.outputs.outputs.droplet_ip }}" > $GITHUB_OUTPUT/droplet_ip.txt
+    
+    - name: Upload Terraform state
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-state
+        path: terraform/terraform.tfstate
+        retention-days: 30
+
+  train:
+    name: Train Model
+    runs-on: ubuntu-latest
+    needs: [dataset, provision]
+    if: ${{ github.event.inputs.skip_training != 'true' }}
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      DROPLET_IP: ${{ needs.provision.outputs.droplet_ip }}
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GH_TOKEN }}
+    
+    - name: Download datasets
+      uses: actions/download-artifact@v4
+      with:
+        name: datasets
+        path: data/
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        pip install -q torch --index-url https://download.pytorch.org/whl/rocm6.1
+        pip install -q transformers accelerate peft datasets sentencepiece
+    
+    - name: Run training
+      run: |
+        cd ${{ github.workspace }}
+        python scripts/train.py \
+          --model "${{ github.event.inputs.model }}" \
+          --dataset "${{ needs.dataset.outputs.dataset_path }}" \
+          --output ./fine-tuned-model \
+          --epochs ${{ github.event.inputs.epochs }} \
+          --batch-size ${{ github.event.inputs.batch_size }} \
+          --prompt-style cot
+    
+    - name: Upload model
+      uses: actions/upload-artifact@v4
+      with:
+        name: fine-tuned-model
+        path: fine-tuned-model/
+        retention-days: 30
+    
+    - name: Upload training logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: training-logs
+        path: |
+          fine-tuned-model/trainer_state.json
+          *.log
+        retention-days: 30
+
+  summary:
+    name: Deployment Summary
+    needs: [test, dataset, provision, train]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Summary
+      run: |
+        echo "## Deployment Pipeline Complete"
+        echo ""
+        echo "| Stage | Status |"
+        echo "|-------|--------|"
+        echo "| Tests | ${{ needs.test.result }} |"
+        echo "| Dataset | ${{ needs.dataset.result }} |"
+        echo "| Infrastructure | ${{ needs.provision.result }} |"
+        echo "| Training | ${{ needs.train.result }} |"
+        echo ""
+        
+        if [ "${{ needs.provision.result }}" == "success" ]; then
+          echo "### GPU Instance"
+          echo "IP: ${{ needs.provision.outputs.droplet_ip }}"
+        fi
+        
+        if [ "${{ needs.train.result }}" == "success" ]; then
+          echo "### Model Trained"
+          echo "Dataset: ${{ needs.dataset.outputs.dataset_path }}"
+          echo "Samples: ${{ needs.dataset.outputs.dataset_count }}"
+        fi

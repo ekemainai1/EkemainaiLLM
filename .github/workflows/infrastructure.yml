@@ -1,0 +1,172 @@
+name: Infrastructure Provisioning
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+          - plan-apply
+      droplet_type:
+        description: 'Droplet type'
+        required: false
+        type: choice
+        default: 'single'
+        options:
+          - single
+          - cluster
+      region:
+        description: 'Region'
+        required: false
+        default: 'nyc3'
+      enable_volume:
+        description: 'Attach data volume'
+        required: false
+        type: boolean
+        default: false
+
+  workflow_run:
+    workflows: ['Tests', 'Dataset Pipeline']
+    types: [completed]
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+jobs:
+  terraform:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: infrastructure
+    permissions:
+      contents: write
+    env:
+      TF_VERSION: '1.7.0'
+      DO_TOKEN: ${{ secrets.DO_TOKEN }}
+      SSH_KEY_FINGERPRINT: ${{ secrets.SSH_KEY_FINGERPRINT }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        sparse-checkout: |
+          terraform/
+        sparse-checkout-cone-mode: false
+
+    - name: Verify Terraform files exist
+      run: |
+        if [ ! -d "terraform" ]; then
+          echo "Error: terraform directory not found"
+          exit 1
+        fi
+        ls -la terraform/
+
+    - name: Download Terraform
+      run: |
+        wget -q https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+        unzip -q terraform_${TF_VERSION}_linux_amd64.zip
+        mv terraform /usr/local/bin/
+        terraform version
+
+    - name: Prepare Terraform variables
+      id: tf-vars
+      run: |
+        cd terraform
+        
+        # Create terraform.tfvars file with inputs
+        cat > terraform.tfvars << EOF
+        do_token = "$DO_TOKEN"
+        ssh_key_fingerprint = "$SSH_KEY_FINGERPRINT"
+        region = "${{ github.event.inputs.region || 'nyc3' }}"
+        enable_cluster = ${{ github.event.inputs.droplet_type == 'cluster' && 'true' || 'false' }}
+        enable_volume = ${{ github.event.inputs.enable_volume == 'true' && 'true' || 'false' }}
+        EOF
+        
+        echo "terraform_vars_created=true" >> $GITHUB_OUTPUT
+
+    - name: Terraform Init
+      run: |
+        cd terraform
+        terraform init -upgrade
+
+    - name: Terraform Plan
+      if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'plan-apply'
+      id: plan
+      run: |
+        cd terraform
+        terraform plan -var-file=terraform.tfvars -out=tfplan
+        echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+
+    - name: Comment Plan Result
+      if: github.event.inputs.action == 'plan' && github.event.inputs.action != ''
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const plan = fs.readFileSync('terraform/tfplan', 'utf8');
+          const truncated = plan.length > 65000 ? plan.substring(0, 65000) + '\n... (truncated)' : plan;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: '## Terraform Plan\n\n```\n' + truncated + '\n```'
+          });
+
+    - name: Terraform Apply
+      if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'plan-apply'
+      run: |
+        cd terraform
+        terraform apply -var-file=terraform.tfvars -auto-approve
+
+    - name: Terraform Destroy
+      if: github.event.inputs.action == 'destroy'
+      run: |
+        cd terraform
+        terraform destroy -var-file=terraform.tfvars -auto-approve
+
+    - name: Get Outputs
+      if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'plan-apply'
+      id: outputs
+      run: |
+        cd terraform
+        echo "droplet_ip=$(terraform output -raw droplet_ip)" >> $GITHUB_OUTPUT
+        echo "gpu_info=$(terraform output -raw gpu_info)" >> $GITHUB_OUTPUT
+
+    - name: Create GitHub Environment
+      if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'plan-apply'
+      run: |
+        echo "GPU Droplet provisioned successfully!"
+        echo "Droplet IP: ${{ steps.outputs.outputs.droplet_ip }}"
+        echo "GPU Config: ${{ steps.outputs.outputs.gpu_info }}"
+        echo ""
+        echo "To connect: ssh root@${{ steps.outputs.outputs.droplet_ip }}"
+        echo ""
+        echo "To run training:"
+        echo "  cd /root/EkemainaiAgent"
+        echo "  python scripts/train.py --model mistralai/Mistral-7B-Instruct-v0.3 --dataset data/combined_final.jsonl --output ./fine-tuned-model"
+
+    - name: Upload Terraform State
+      if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'plan-apply'
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-state
+        path: terraform/terraform.tfstate
+        retention-days: 30
+
+    - name: Summary
+      run: |
+        echo "## Infrastructure Provisioning Complete"
+        echo ""
+        echo "| Action | Status |"
+        echo "|--------|--------|"
+        echo "| Terraform Action | ${{ github.event.inputs.action }} |"
+        echo "| Droplet Type | ${{ github.event.inputs.droplet_type }} |"
+        echo "| Region | ${{ github.event.inputs.region || 'nyc3' }} |"
+        echo ""
+        echo "### Secrets Required"
+        echo "Add these secrets to your GitHub repository:"
+        echo "- `DO_TOKEN` - DigitalOcean API token"
+        echo "- `SSH_KEY_FINGERPRINT` - SSH key fingerprint"
