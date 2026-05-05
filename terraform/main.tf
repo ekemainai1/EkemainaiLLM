@@ -152,7 +152,7 @@ resource "digitalocean_volume" "training_data" {
   count      = var.enable_volume ? 1 : 0
   name       = "training-data-${formatdate("YYYYMMDD", timestamp())}"
   region     = var.region
-  size       = "100gi"
+  size       = 100
   description = "Training data volume"
   
   tags = ["training-data"]
