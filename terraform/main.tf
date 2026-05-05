@@ -41,15 +41,20 @@ data "http" "do_sizes" {
 
 # Parse and filter for GPU sizes - with error handling
 locals {
-  api_response = try(jsondecode(data.http.do_sizes.body), {sizes: []})
-  all_sizes    = try(local.api_response.sizes, [])
-  gpu_sizes    = [for s in local.all_sizes : s if s.memory >= 190000]
+  api_response   = try(jsondecode(data.http.do_sizes.response_body), {sizes: []})
+  all_sizes      = try(local.api_response.sizes, [])
+  
+  # Filter for GPU sizes - be more inclusive with memory threshold
+  gpu_sizes      = [for s in local.all_sizes : s if s.vcpus >= 8 && contains(s.slug, "gpu")]
   
   # Find first GPU available in preferred regions
-  droplet_config = length(local.gpu_sizes) > 0 ? {
-    region = [for r in var.preferred_regions : r if contains(local.gpu_sizes[0].regions, r)][0]
+  gpu_match = length(local.gpu_sizes) > 0 ? {
+    region = length([for r in var.preferred_regions : r if contains(local.gpu_sizes[0].regions, r)]) > 0 ? 
+             [for r in var.preferred_regions : r if contains(local.gpu_sizes[0].regions, r)][0] : var.preferred_regions[0]
     size   = local.gpu_sizes[0].slug
   } : null
+  
+  droplet_config = local.gpu_match
   
   # Fallback if no GPU found - use default
   final_config = local.droplet_config != null ? local.droplet_config : {
@@ -62,8 +67,8 @@ locals {
 resource "digitalocean_droplet" "gpu_training" {
   count    = local.droplet_config != null ? 1 : 0
   name     = "gpu-training-${formatdate("YYYYMMDD", timestamp())}"
-  region   = local.final_config.region
-  size     = local.final_config.size
+  region   = local.droplet_config != null ? local.droplet_config.region : "nyc1"
+  size     = local.droplet_config != null ? local.droplet_config.size : "s-4vcpu-8gb"
   image    = "ubuntu-22-04-x64"
   backups  = false
 
@@ -74,8 +79,8 @@ resource "digitalocean_droplet" "gpu_training" {
 set -e
 
 echo "=== GPU Training Node ==="
-echo "Region: ${local.final_config.region}"
-echo "Size: ${local.final_config.size}"
+echo "Region: ${local.droplet_config != null ? local.droplet_config.region : "fallback"}"
+echo "Size: ${local.droplet_config != null ? local.droplet_config.size : "fallback"}"
 
 # Update and install basics
 apt-get update
@@ -105,5 +110,5 @@ output "droplet_ip" {
 
 output "gpu_info" {
   description = "GPU configuration"
-  value       = local.final_config
+  value       = local.droplet_config != null ? local.droplet_config : {region: "nyc1", size: "s-4vcpu-8gb"}
 }
