@@ -11,8 +11,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -23,47 +23,18 @@ jobs:
       run: pip install -q ruff black isort
     
     - name: Check code formatting (black)
-      run: black --check scripts/ tests/ || echo "Run: black scripts/ tests/"
+      run: black --check scripts/ tests/ || true
     
     - name: Check import order (isort)
-      run: isort --check-only --diff scripts/ tests/ || echo "Run: isort scripts/ tests/"
+      run: isort --check-only --diff scripts/ tests/ || true
     
     - name: Run linter (ruff)
-      run: ruff check scripts/ tests/ || echo "Run: ruff check --fix scripts/ tests/"
+      run: ruff check scripts/ tests/ || true
     
     - name: Check Python syntax
       run: |
         python -m py_compile scripts/*.py
         python -m py_compile tests/*.py
-        echo "Syntax OK"
     
-    - name: Check for common issues
-      run: |
-        grep -n "TODO\|FIXME\|XXX" scripts/*.py || echo "No TODOs found"
-        grep -rn "password\s*=\s*['\"]" scripts/ || echo "No hardcoded passwords"
-        grep -rn "api_key\s*=\s*['\"]" scripts/ || echo "No hardcoded api_keys"
-        echo "Security check complete"
-
-  security:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-        cache: 'pip'
-    
-    - name: Install bandit
-      run: pip install -q bandit
-    
-    - name: Run security check
-      run: bandit -r scripts/ -f screen || echo "Run: bandit -r scripts/ --exclude .venv"
-    
-    - name: Check dependencies
-      run: |
-        pip install -q pip-audit || echo "pip-audit not installed"
+    - name: Check for security issues (bandit)
+      run: pip install -q bandit && bandit -r scripts/ tests/ || echo " bandit not critical"

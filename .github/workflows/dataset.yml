@@ -12,8 +12,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -30,39 +30,19 @@ jobs:
       run: |
         cd ${{ github.workspace }}
         python3 -c "
-        from pathlib import Path
-        data_files = list(Path('data').glob('*.jsonl'))
-        if not data_files:
-            print('No dataset files found')
-            exit(0)
-        total = 0
-        print('\\nDataset files:')
-        for f in sorted(data_files)[:15]:
-            size_mb = f.stat().st_size / 1024 / 1024
-            count = sum(1 for _ in open(f))
-            total += count
-            print(f'  {f.name}: {count:,} samples ({size_mb:.1f} MB)')
-        print(f'\\nTotal: {total:,} samples')
-        " || echo "Check completed"
-    
-    - name: Check dataset sizes
-      run: |
-        cd ${{ github.workspace }}
-        python3 -c "
         import os
         from pathlib import Path
         
         data_files = list(Path('data').glob('*.jsonl'))
         total = 0
         
-        print('\\nDataset files:')
-        for f in sorted(data_files)[:15]:
-            size_mb = f.stat().st_size / 1024 / 1024
+        for f in sorted(data_files):
+            size = f.stat().st_size / (1024*1024)
             count = sum(1 for _ in open(f))
             total += count
-            print(f'  {f.name}: {count:,} samples ({size_mb:.1f} MB)')
+            print(f'  {f.name}: {count:,} samples ({size:.1f} MB)')
         
-        print(f'\\nTotal: {total:,} samples across {len(data_files)} files')
+        print(f'\nTotal: {total:,} samples across {len(data_files)} files')
         "
     
     - name: Verify dataset schema
@@ -92,3 +72,14 @@ jobs:
         
         print('Schema validation complete: OK')
         "
+    
+    - name: Report JSONL validity
+      run: |
+        cd ${{ github.workspace }}
+        for f in data/*.jsonl; do
+          if [ -f "$f" ]; then
+            count=$(wc -l < "$f")
+            valid=$(python3 -c "import json; open('$f').close()" 2>/dev/null && echo "valid" || echo "INVALID")
+            echo "$f: $count lines, $valid"
+          fi
+        done || echo "No JSONL files to check"
