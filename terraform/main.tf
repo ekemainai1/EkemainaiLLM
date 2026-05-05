@@ -44,23 +44,15 @@ locals {
   api_response   = try(jsondecode(data.http.do_sizes.response_body), {sizes: []})
   all_sizes      = try(local.api_response.sizes, [])
   
-  # Filter for GPU sizes - be more inclusive with memory threshold
-  gpu_sizes      = [for s in local.all_sizes : s if s.vcpus >= 8 && contains(s.slug, "gpu")]
+  # Filter for GPU sizes - be more inclusive
+  gpu_sizes = length(local.all_sizes) > 0 ? [for s in local.all_sizes : s if s.vcpus >= 8 && contains(s.slug, "gpu")] : []
   
-  # Find first GPU available in preferred regions
-  gpu_match = length(local.gpu_sizes) > 0 ? {
-    region = length([for r in var.preferred_regions : r if contains(local.gpu_sizes[0].regions, r)]) > 0 ? 
-             [for r in var.preferred_regions : r if contains(local.gpu_sizes[0].regions, r)][0] : var.preferred_regions[0]
-    size   = local.gpu_sizes[0].slug
+  # Find first GPU available (simplified - use first GPU and first preferred region)
+  first_gpu = length(local.gpu_sizes) > 0 ? local.gpu_sizes[0] : null
+  droplet_config = first_gpu != null ? {
+    region = var.preferred_regions[0]
+    size   = first_gpu.slug
   } : null
-  
-  droplet_config = local.gpu_match
-  
-  # Fallback if no GPU found - use default
-  final_config = local.droplet_config != null ? local.droplet_config : {
-    region = "nyc1"
-    size   = "s-4vcpu-8gb"
-  }
 }
 
 # Single GPU Droplet
