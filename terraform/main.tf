@@ -29,7 +29,7 @@ variable "ssh_key_path" {
 variable "region" {
   description = "DigitalOcean region"
   type        = string
-  default    = "nyc3"  # NYC3, SGP1, AMS3, BLR1, etc.
+  default    = "atl1"  # NYC3, SGP1, AMS3, BLR1, ATL1, etc.
 }
 
 # Single MI300X GPU Droplet (192GB VRAM)
