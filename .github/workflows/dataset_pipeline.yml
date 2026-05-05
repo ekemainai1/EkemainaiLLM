@@ -20,6 +20,8 @@ on:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       PYTHONPATH: ${{ github.workspace }}
     
