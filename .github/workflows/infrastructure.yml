@@ -51,6 +51,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
         sparse-checkout: |
           terraform/
         sparse-checkout-cone-mode: false
