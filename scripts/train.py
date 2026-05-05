@@ -21,6 +21,7 @@ from peft import (
     TaskType,
 )
 from datasets import load_dataset
+from huggingface_hub import HfApi, create_repo
 
 
 def get_args():
@@ -153,6 +154,18 @@ def get_args():
         type=float,
         default=1.0,
         help="Maximum gradient norm for clipping"
+    )
+    parser.add_argument(
+        "--hf-repo",
+        type=str,
+        default=None,
+        help="HuggingFace repo ID to upload model (e.g., 'username/Ekemainai'). Requires HF_TOKEN env var."
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default="Ekemainai",
+        help="Name of the fine-tuned model for upload metadata"
     )
     return parser.parse_args()
 
@@ -445,6 +458,28 @@ def main():
         trainer.log_metrics("eval", eval_metrics)
         print(f"\n  Final eval loss: {eval_metrics['eval_loss']:.4f}")
         print(f"  Final eval perplexity: {eval_metrics.get('eval_perplexity', 'N/A'):.2f}")
+
+    if args.hf_repo:
+        hf_token = os.getenv("HF_TOKEN")
+        if hf_token:
+            print(f"\n📤 Uploading model to HuggingFace Hub: {args.hf_repo}")
+            try:
+                api = HfApi(token=hf_token)
+                create_repo(args.hf_repo, repo_type="model", exist_ok=True, token=hf_token)
+                api.upload_folder(
+                    folder_path=args.output,
+                    repo_id=args.hf_repo,
+                    repo_type="model",
+                    token=hf_token,
+                    commit_message=f"Upload {args.model_name} fine-tuned model"
+                )
+                print(f"✅ Model uploaded to: https://huggingface.co/{args.hf_repo}")
+            except Exception as e:
+                print(f"⚠️  HuggingFace upload failed: {e}")
+                print("   Model saved locally but not uploaded to HuggingFace Hub")
+        else:
+            print("\n⚠️  HF_TOKEN not set. Skipping HuggingFace upload.")
+            print("   Set HF_TOKEN environment variable to enable upload.")
 
     print("\nTo use the fine-tuned model:")
     print(f"  python main.py --model-dir {args.output}")

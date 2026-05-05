@@ -20,3 +20,4 @@ tensorboard
 wandb
 pytest
 pytest-cov
+huggingface_hub
