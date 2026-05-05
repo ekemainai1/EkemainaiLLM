@@ -69,8 +69,8 @@ resource "digitalocean_droplet" "gpu_training" {
 set -e
 
 echo "=== GPU Training Node ==="
-echo "Region: ${local.droplet_config != null ? local.droplet_config.region : "fallback"}"
-echo "Size: ${local.droplet_config != null ? local.droplet_config.size : "fallback"}"
+echo "Region: ${local.selected_region}"
+echo "Size: ${local.selected_size}"
 
 # Update and install basics
 apt-get update
