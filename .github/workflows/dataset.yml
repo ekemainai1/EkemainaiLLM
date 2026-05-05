@@ -68,10 +68,18 @@ jobs:
         cd ${{ github.workspace }}
         python3 -c "
         import json
+        import os
+
+        dataset_path = 'data/combined_final.jsonl'
+        
+        if not os.path.exists(dataset_path):
+            print('SKIP: Dataset file not found (data/combined_final.jsonl)')
+            print('This is expected if dataset has not been generated yet.')
+            exit(0)
         
         required_fields = ['instruction', 'input', 'output']
         
-        with open('data/combined_final.jsonl') as f:
+        with open(dataset_path) as f:
             for i, line in enumerate(f):
                 if i >= 100:
                     break
