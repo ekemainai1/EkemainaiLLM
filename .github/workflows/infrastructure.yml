@@ -76,9 +76,7 @@ jobs:
         cat > terraform.tfvars << EOF
         do_token = "$DO_TOKEN"
         ssh_key_fingerprint = "$SSH_KEY_FINGERPRINT"
-        region = "${{ github.event.inputs.region || 'atl1' }}"
-        enable_cluster = ${{ github.event.inputs.droplet_type == 'cluster' && 'true' || 'false' }}
-        enable_volume = ${{ github.event.inputs.enable_volume == 'true' && 'true' || 'false' }}
+        preferred_regions = ["atl1", "nyc1", "sfo2", "ams3"]
         EOF
         
         echo "terraform_vars_created=true" >> $GITHUB_OUTPUT

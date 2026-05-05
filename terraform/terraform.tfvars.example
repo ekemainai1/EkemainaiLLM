@@ -7,11 +7,6 @@ do_token = "your-digitalocean-token"
 # SSH key fingerprint (get with: doctl compute ssh-key list)
 ssh_key_fingerprint = "your-ssh-key-fingerprint"
 
-# Region (nyc3, sgp1, ams3, blr1, lon1, tor1, atl1)
-region = "atl1"
-
-# Enable 8-GPU cluster node (costs ~$16/hr)
-enable_cluster = false
-
-# Enable attached volume for datasets
-enable_volume = false
+# Preferred regions (will auto-select first available)
+# Available: atl1, nyc1, sfo2, ams3, sgp1, blr1, lon1
+preferred_regions = ["atl1", "nyc1", "sfo2", "ams3"]

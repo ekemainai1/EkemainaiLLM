@@ -181,9 +181,7 @@ jobs:
         cat > terraform.tfvars << EOF
         do_token = "$DO_TOKEN"
         ssh_key_fingerprint = "$SSH_KEY_FINGERPRINT"
-        region = "atl1"
-        enable_cluster = false
-        enable_volume = false
+        preferred_regions = ["atl1", "nyc1", "sfo2", "ams3"]
         EOF
     
     - name: Terraform Init

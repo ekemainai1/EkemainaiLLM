@@ -1,5 +1,5 @@
-# Terraform configuration for AMD MI300X GPU Droplet
-# DigitalOcean GPU Droplet with AMD Instinct MI300X
+# Terraform configuration for GPU Droplet
+# Dynamically discovers available GPU sizes
 
 terraform {
   required_providers {
@@ -20,185 +20,100 @@ variable "do_token" {
   sensitive   = true
 }
 
-variable "ssh_key_path" {
-  description = "Path to SSH public key"
-  type        = string
-  default    = "~/.ssh/id_rsa.pub"
-}
-
-variable "region" {
-  description = "DigitalOcean region"
-  type        = string
-  default    = "atl1"  # NYC3, SGP1, AMS3, BLR1, ATL1, etc.
-}
-
-# Single MI300X GPU Droplet (192GB VRAM)
-resource "digitalocean_droplet" "mi300x_single" {
-  name     = "mi300x-training-${formatdate("YYYYMMDD", timestamp())}"
-  region  = var.region
-  image   = "gpu-amd-base"  # ROCm AI/ML base image
-  size    = "gpu-mi300x1-192gb"
-  backups = false
-
-  ssh_keys = [var.ssh_key_fingerprint]
-
-  user_data = <<-EOF
-              #!/bin/bash
-              set -e
-              
-              echo "=== AMD MI300X GPU Training Node ==="
-              
-              # Update and install basics
-              apt-get update
-              apt-get install -y git python3-pip curl wget tmux htop
-              
-              # Verify ROCm
-              echo "Checking ROCm..."
-              rocm-smi || echo "ROCm not in PATH"
-              
-              # Verify GPU
-              echo "Checking GPU..."
-              rocminfo || echo "rocminfo not available"
-              
-              # Install PyTorch with ROCm
-              echo "Installing PyTorch with ROCm support..."
-              pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.1
-              
-              # Install training dependencies
-              echo "Installing training dependencies..."
-              pip3 install transformers accelerate peft datasets sentencepiece
-              
-              # Clone repository
-              echo "Cloning EkemainaiAgent..."
-              cd /root
-              git clone https://github.com/YOUR_USERNAME/EkemainaiAgent.git
-              cd EkemainaiAgent
-              
-              # Create data symlink (if using volume)
-              # ln -s /mnt/data data
-              
-              echo "=== Setup Complete ==="
-              echo "GPU info:"
-              rocm-smi
-              EOF
-
-  tags = ["ai-training", "gpu", "mi300x"]
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-# 8x MI300X GPU Droplet for large-scale training
-resource "digitalocean_droplet" "mi300x_cluster" {
-  count    = var.enable_cluster ? 1 : 0
-  name     = "mi300x-cluster-${formatdate("YYYYMMDD", timestamp())}"
-  region  = var.region
-  image   = "gpu-amd-base"
-  size    = "gpu-mi300x8-1536gb"
-  backups = false
-
-  ssh_keys = [var.ssh_key_fingerprint]
-
-  user_data = <<-EOF
-              #!/bin/bash
-              set -e
-              
-              echo "=== AMD MI300X 8-GPU Training Node ==="
-              
-              # Update and install basics
-              apt-get update
-              apt-get install -y git python3-pip curl wget tmux htop
-              
-              # Verify ROCm
-              echo "Checking ROCm..."
-              rocm-smi
-              
-              # Install PyTorch with ROCm
-              pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.1
-              
-              # Install training dependencies
-              pip3 install transformers accelerate peft datasets sentencepiece vllm
-              
-              # Enable IPv4 forwarding for distributed training
-              echo 1 > /proc/sys/net/ipv4/ip_forward
-              
-              echo "=== Setup Complete ==="
-              echo "GPU info:"
-              rocm-smi
-              EOF
-
-  tags = ["ai-training", "gpu", "mi300x-cluster"]
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-variable "enable_cluster" {
-  description = "Enable 8-GPU cluster node"
-  type        = bool
-  default    = false
-}
-
 variable "ssh_key_fingerprint" {
   description = "DigitalOcean SSH key fingerprint"
   type        = string
-  # Get from: doctl compute ssh-key list
 }
 
-# Optional: Attached volume for datasets
-resource "digitalocean_volume" "training_data" {
-  count      = var.enable_volume ? 1 : 0
-  name       = "training-data-${formatdate("YYYYMMDD", timestamp())}"
-  region     = var.region
-  size       = 100
-  description = "Training data volume"
+variable "preferred_regions" {
+  description = "Preferred regions for GPU droplet"
+  type        = list(string)
+  default     = ["atl1", "nyc1", "sfo2", "ams3", "sgp1"]
+}
+
+# Query available GPU sizes from DigitalOcean API
+data "external" "available_gpu" {
+  program = ["bash", "-lc", <<EOT
+TOKEN="${do_token}"
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://api.digitalocean.com/v2/sizes?per_page=200" \
+  | jq -r '.sizes[] | select(.memory >= 190000) | "\(.slug) \(.regions | join(","))"'
+EOT
+  ]
+}
+
+# Find first available GPU in preferred regions
+locals {
+  available_gpus = { for line in split("\n", data.external.available_gpu.result) : 
+    split(" ", line)[0] => split(",", split(" ", line)[1]) 
+    if length(split(" ", line)) > 1
+  }
   
-  tags = ["training-data"]
+  # Find GPU that exists in preferred regions
+  selected = {
+    for region in var.preferred_regions :
+    region => [for size in keys(local.available_gpus) : size if contains(local.available_gpus[size], region)]
+    if length([for size in keys(local.available_gpus) : size if contains(local.available_gpus[size], region)]) > 0
+  }
+  
+  selected_region = keys(local.selected)[0]
+  selected_size  = local.selected[local.selected_region][0]
+  
+  droplet_config = {
+    region = local.selected_region
+    size   = local.selected_size
+  }
 }
 
-variable "enable_volume" {
-  description = "Enable data volume"
-  type        = bool
-  default    = false
+# Single GPU Droplet
+resource "digitalocean_droplet" "gpu_training" {
+  name     = "gpu-training-${formatdate("YYYYMMDD", timestamp())}"
+  region   = local.droplet_config.region
+  size     = local.droplet_config.size
+  image    = "ubuntu-22-04-x64"
+  backups  = false
+
+  ssh_keys = [var.ssh_key_fingerprint]
+
+  user_data = <<-EOF
+#!/bin/bash
+set -e
+
+echo "=== GPU Training Node ==="
+echo "Region: ${local.droplet_config.region}"
+echo "Size: ${local.droplet_config.size}"
+
+# Update and install basics
+apt-get update
+apt-get install -y git python3-pip curl wget tmux htop
+
+# Install PyTorch with ROCm support
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.1 || true
+
+# Install training dependencies
+pip3 install transformers accelerate peft datasets sentencepiece || true
+
+# Clone repository
+echo "=== Setup Complete ==="
+EOF
+
+  tags = ["ai-training", "gpu", "training-node"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Outputs
 output "droplet_ip" {
-  description = "Primary GPU Droplet IP"
-  value       = digitalocean_droplet.mi300x_single.ipv4_address
-}
-
-output "cluster_ips" {
-  description = "Cluster node IPs"
-  value       = digitalocean_droplet.mi300x_cluster[*].ipv4_address
+  description = "GPU Droplet IP"
+  value       = digitalocean_droplet.gpu_training.ipv4_address
 }
 
 output "gpu_info" {
   description = "GPU configuration"
   value       = {
-    slug       = digitalocean_droplet.mi300x_single.size
-    vcpus      = digitalocean_droplet.mi300x_single.vcpus
-    memory_gb = digitalocean_droplet.mi300x_single.memory / 1024
+    region = local.droplet_config.region
+    size   = local.droplet_config.size
   }
 }
-
-# Usage example in comments:
-# 
-# # Apply with:
-# terraform init
-# terraform plan -var="do_token=$DO_TOKEN" -var="ssh_key_fingerprint=xx:xx:xx:xx:xx"
-# terraform apply -var="do_token=$DO_TOKEN" -var="ssh_key_fingerprint=xx:xx:xx:xx:xx"
-# 
-# # Connect via SSH:
-# ssh root@<droplet_ip>
-# 
-# # Run training:
-# cd /root/EkemainaiAgent
-# python3 scripts/train.py \
-#   --model mistralai/Mistral-7B-Instruct-v0.3 \
-#   --dataset data/combined_final.jsonl \
-#   --output ./fine-tuned-model \
-#   --epochs 3 \
-#   --batch_size 4
