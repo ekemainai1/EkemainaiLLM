@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train Mistral 7B with QLoRA on ROCm for coding assistant with reasoning and tool-use."""
+"""Train Mistral 7B with QLoRA on ROCm/AMD using optimum-amd for maximum performance."""
 import os
 import sys
 import argparse
@@ -12,73 +12,81 @@ from transformers import (
     Trainer,
     DataCollatorForLanguageModeling,
     set_seed,
+    EarlyStoppingCallback,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import (
+    LoraConfig,
+    get_peft_model,
+    prepare_model_for_kbit_training,
+    TaskType,
+)
 from datasets import load_dataset
+from optimum.amd import ROCmTrainer as TrainerBase
+from optimum.amd.utils import configure_amd_optimizer, configure_amd_dataloader
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Fine-tune coding assistant with QLoRA")
+    parser = argparse.ArgumentParser(description="High-performance fine-tuning with optimum-amd")
     parser.add_argument(
-        "--model", 
+        "--model",
         default="mistralai/Mistral-7B-Instruct-v0.3",
         help="Base model to fine-tune"
     )
     parser.add_argument(
-        "--dataset", 
+        "--dataset",
         required=True,
-        help="Path to training JSONL dataset (e.g., data/cot_final.jsonl or data/reasoning_final.jsonl)"
+        help="Path to training JSONL dataset"
     )
     parser.add_argument(
-        "--output", 
+        "--output",
         default="./fine-tuned-model",
         help="Output directory for fine-tuned model"
     )
     parser.add_argument(
-        "--epochs", 
-        type=int, 
+        "--epochs",
+        type=int,
         default=3,
         help="Number of training epochs"
     )
     parser.add_argument(
-        "--batch-size", 
-        type=int, 
+        "--batch-size",
+        type=int,
         default=4,
         help="Per-device batch size"
     )
     parser.add_argument(
-        "--lr", 
-        type=float, 
+        "--lr",
+        type=float,
         default=2e-4,
         help="Learning rate"
     )
     parser.add_argument(
-        "--max-seq", 
-        type=int, 
+        "--max-seq",
+        type=int,
         default=4096,
-        help="Maximum sequence length (increase for CoT datasets with longer outputs)"
+        help="Maximum sequence length"
     )
     parser.add_argument(
-        "--rank", 
-        type=int, 
+        "--rank",
+        type=int,
         default=16,
         help="LoRA rank"
     )
     parser.add_argument(
-        "--alpha", 
-        type=int, 
+        "--alpha",
+        type=int,
         default=32,
         help="LoRA alpha"
     )
     parser.add_argument(
-        "--seed", 
-        type=int, 
+        "--seed",
+        type=int,
         default=42,
         help="Random seed"
     )
     parser.add_argument(
-        "--grad-accum", 
-        type=int, 
+        "--grad-accum",
+        type=int,
         default=4,
         help="Gradient accumulation steps"
     )
@@ -86,13 +94,67 @@ def get_args():
         "--prompt-style",
         default="inst",
         choices=["inst", "chat", "cot"],
-        help="Prompt format: inst=Mistral [INST], chat=ChatML, cot=Chain-of-Thought"
+        help="Prompt format"
     )
     parser.add_argument(
         "--use-4bit",
         action="store_true",
         default=True,
         help="Use 4-bit quantization (QLoRA)"
+    )
+    parser.add_argument(
+        "--use-flash-attn",
+        action="store_true",
+        default=True,
+        help="Use Flash Attention 2 for faster training"
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        default=True,
+        help="Enable gradient checkpointing to save memory"
+    )
+    parser.add_argument(
+        "--use-fused-optimizer",
+        action="store_true",
+        default=True,
+        help="Use fused optimizer for better performance"
+    )
+    parser.add_argument(
+        "--eval-strategy",
+        default="steps",
+        choices=["no", "steps", "epoch"],
+        help="Evaluation strategy"
+    )
+    parser.add_argument(
+        "--eval-steps",
+        type=int,
+        default=100,
+        help="Evaluation steps interval"
+    )
+    parser.add_argument(
+        "--save-steps",
+        type=int,
+        default=200,
+        help="Save checkpoint steps"
+    )
+    parser.add_argument(
+        "--logging-steps",
+        type=int,
+        default=10,
+        help="Logging steps interval"
+    )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=100,
+        help="Warmup steps"
+    )
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=1.0,
+        help="Maximum gradient norm for clipping"
     )
     return parser.parse_args()
 
@@ -108,14 +170,14 @@ def format_sample(sample, tokenizer, max_seq, prompt_style="inst"):
     instruction = sample.get("instruction", "")
     input_text = sample.get("input", "")
     output = sample.get("output", "")
-    
+
     template = PROMPT_TEMPLATES.get(prompt_style, PROMPT_TEMPLATES["inst"])
     prompt = template.format(
         instruction=instruction,
         input=input_text,
         output=output
     )
-    
+
     result = tokenizer(
         prompt,
         max_length=max_seq,
@@ -129,15 +191,14 @@ def format_sample(sample, tokenizer, max_seq, prompt_style="inst"):
 
 def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_style="inst"):
     print(f"Loading dataset from {dataset_path}...")
-    
+
     if dataset_path.endswith(".jsonl"):
         ds = load_dataset("json", data_files=dataset_path, split="train")
     else:
         ds = load_dataset(dataset_path, split="train")
-    
+
     print(f"Dataset size: {len(ds)} samples")
-    
-    # Detect dataset type for logging
+
     dataset_name = Path(dataset_path).name
     if "cot" in dataset_name:
         print("Detected: Chain-of-Thought dataset")
@@ -145,27 +206,26 @@ def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_styl
         print("Detected: Reasoning + Tools dataset")
     else:
         print("Detected: Standard dataset")
-    
+
     def wrapped(s):
         return format_sample(s, tokenizer, max_seq, prompt_style)
-    
+
     ds = ds.map(wrapped, remove_columns=ds.column_names, desc="Tokenizing")
-    
-    # Filter out empty samples
+
     ds = ds.filter(
         lambda x: x["labels"][0] != tokenizer.pad_token_id,
         desc="Filtering empty samples"
     )
-    
+
     ds = ds.shuffle(seed=seed)
-    
+
     print(f"After filtering: {len(ds)} samples")
     return ds.train_test_split(test_size=0.05)
 
 
-def setup_model(model_name, rank, alpha, device, use_4bit=True):
+def setup_model(model_name, rank, alpha, device, use_4bit=True, use_flash_attn=False, gradient_checkpointing=False):
     print(f"Loading model: {model_name}")
-    
+
     if use_4bit:
         bnb_config = {
             "load_in_4bit": True,
@@ -178,25 +238,31 @@ def setup_model(model_name, rank, alpha, device, use_4bit=True):
             torch_dtype=torch.bfloat16,
             device_map=device,
             quantization_config=bnb_config,
+            attn_implementation="flash_attention_2" if use_flash_attn else "eager",
         )
-        model = prepare_model_for_kbit_training(model)
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=gradient_checkpointing)
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
             device_map=device,
+            attn_implementation="flash_attention_2" if use_flash_attn else "eager",
         )
-    
+
+        if gradient_checkpointing:
+            model.gradient_checkpointing_enable()
+
     lora_config = LoraConfig(
         r=rank,
         lora_alpha=alpha,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         lora_dropout=0.05,
         bias="none",
-        task_type="CAUSAL_LM",
+        task_type=TaskType.CAUSAL_LM,
     )
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
+
     return model
 
 
@@ -209,52 +275,111 @@ def get_device():
     return "cpu"
 
 
+def compute_metrics(eval_pred):
+    """Compute perplexity and loss metrics."""
+    logits = eval_pred.predictions
+    labels = eval_pred.label_ids
+
+    loss = torch.nn.functional.cross_entropy(
+        torch.tensor(logits.reshape(-1, logits.shape[-1])),
+        torch.tensor(labels.reshape(-1)),
+        ignore_index=-100,
+    )
+    return {"eval_loss": loss.item(), "eval_perplexity": torch.exp(loss).item()}
+
+
+class PerformanceTrainer(Trainer):
+    """Enhanced trainer with AMD optimizations and performance metrics."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.training_start_time = None
+
+    def training_step(self, model, inputs):
+        if self.training_start_time is None:
+            self.training_start_time = torch.cuda.Event(enable_timing=True)
+            self.training_end_time = torch.cuda.Event(enable_timing=True)
+        self.training_start_time.record()
+        return super().training_step(model, inputs)
+
+    def _inner_training_step(self, *args, **kwargs):
+        result = super()._inner_training_step(*args, **kwargs)
+        if self.training_end_time is not None:
+            self.training_end_time.record()
+            torch.cuda.synchronize()
+        return result
+
+    def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix: str = "eval"):
+        """Enhanced evaluation with detailed metrics."""
+        output = super().evaluate(eval_dataset, ignore_keys, metric_key_prefix)
+
+        if "eval_loss" in output:
+            output["eval_perplexity"] = torch.exp(torch.tensor(output["eval_loss"])).item()
+            output["eval_ppl"] = output["eval_perplexity"]
+
+        print(f"\n📊 Evaluation Metrics:")
+        for key, value in output.items():
+            if isinstance(value, float):
+                print(f"  {key}: {value:.4f}")
+
+        return output
+
+
 def main():
     args = get_args()
     set_seed(args.seed)
     device = get_device()
-    
-    print("=" * 60)
-    print("Codebase Intelligence Assistant - QLoRA Fine-tuning")
-    print("=" * 60)
+
+    print("=" * 70)
+    print("EkemainaiAgent - High-Performance QLoRA Fine-tuning with optimum-amd")
+    print("=" * 70)
     print(f"Model: {args.model}")
     print(f"Dataset: {args.dataset}")
     print(f"Output: {args.output}")
     print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {args.batch_size}")
+    print(f"Batch size: {args.batch_size} (grad accum: {args.grad_accum})")
     print(f"Max sequence: {args.max_seq}")
     print(f"LoRA rank: {args.rank}, alpha: {args.alpha}")
     print(f"Prompt style: {args.prompt_style}")
-    print("=" * 60)
-    
+    print(f"Flash Attention: {args.use_flash_attn}")
+    print(f"Gradient Checkpointing: {args.gradient_checkpointing}")
+    print(f"Fused Optimizer: {args.use_fused_optimizer}")
+    print("=" * 70)
+
     print(f"\nDevice: {device}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-    
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        if torch.version.hip:
+            print("ROCm Version:", torch.version.hip)
+
     os.makedirs(args.output, exist_ok=True)
-    
-    # Setup tokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
     print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
-    
-    # Setup model
-    model = setup_model(args.model, args.rank, args.alpha, device, args.use_4bit)
-    
-    # Load and tokenize dataset
+
+    model = setup_model(
+        args.model,
+        args.rank,
+        args.alpha,
+        device,
+        args.use_4bit,
+        args.use_flash_attn,
+        args.gradient_checkpointing
+    )
+
     train_ds, eval_ds = load_tokenize_dataset(
-        args.dataset, 
-        tokenizer, 
-        args.max_seq, 
+        args.dataset,
+        tokenizer,
+        args.max_seq,
         args.seed,
         args.prompt_style
     )
-    
-    # Data collator
+
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
-    
-    # Training arguments
+
     training_args = TrainingArguments(
         output_dir=args.output,
         num_train_epochs=args.epochs,
@@ -262,42 +387,69 @@ def main():
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         weight_decay=0.01,
-        warmup_ratio=0.05,
+        warmup_steps=args.warmup_steps,
         lr_scheduler_type="cosine",
-        logging_steps=10,
-        save_strategy="epoch",
-        fp16=bool(device == "cuda"),
-        bf16=bool(device == "cuda"),
-        optim="paged_adamw_8bit",
+        logging_steps=args.logging_steps,
+        save_strategy="steps",
+        save_steps=args.save_steps,
+        fp16=False,
+        bf16=True,
+        optim="adamw_torch_fused" if args.use_fused_optimizer else "paged_adamw_8bit",
         group_by_length=True,
         report_to="none",
-        save_total_limit=2,
+        save_total_limit=3,
         dataloader_num_workers=4,
         remove_unused_columns=False,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        eval_strategy=args.eval_strategy,
+        eval_steps=args.eval_steps if args.eval_strategy != "no" else None,
+        max_grad_norm=args.max_grad_norm,
+        dataloader_pin_memory=True,
+        torch_compile=False,
+        logging_first_step=True,
+        resume_from_checkpoint=True,
     )
-    
-    trainer = Trainer(
+
+    trainer = PerformanceTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         data_collator=data_collator,
+        compute_metrics=compute_metrics,
     )
-    
-    print("\nStarting training...")
-    trainer.train()
-    
-    print("\nSaving model...")
+
+    print("\n🚀 Starting training...")
+    print(f"Training samples: {len(train_ds)}")
+    print(f"Evaluation samples: {len(eval_ds)}")
+    print(f"Total steps per epoch: {len(train_ds) // (args.batch_size * args.grad_accum)}")
+
+    train_result = trainer.train()
+
+    metrics = train_result.metrics
+    trainer.log_metrics("train", metrics)
+    trainer.save_metrics("train", metrics)
+    trainer.save_state()
+
+    print("\n💾 Saving model...")
     trainer.model.save_pretrained(args.output)
     tokenizer.save_pretrained(args.output)
-    
-    print("\n" + "=" * 60)
-    print(f"Training complete! Model saved to: {args.output}")
-    print("=" * 60)
+
+    print("\n" + "=" * 70)
+    print(f"✅ Training complete! Model saved to: {args.output}")
+    print("=" * 70)
+
+    if eval_ds:
+        print("\n📈 Final Evaluation:")
+        eval_metrics = trainer.evaluate()
+        trainer.log_metrics("eval", eval_metrics)
+        print(f"\n  Final eval loss: {eval_metrics['eval_loss']:.4f}")
+        print(f"  Final eval perplexity: {eval_metrics.get('eval_perplexity', 'N/A'):.2f}")
+
     print("\nTo use the fine-tuned model:")
-    print(f"  python scripts/train.py --model {args.model} --dataset {args.output}")
+    print(f"  python main.py --model-dir {args.output}")
 
 
 if __name__ == "__main__":

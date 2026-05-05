@@ -64,6 +64,35 @@ python3 scripts/train.py \
   --max-seq 4096
 ```
 
+### High-Performance Training (with optimum-amd)
+```bash
+# Optimized training with Flash Attention + Gradient Checkpointing
+python3 scripts/train.py \
+  --model mistralai/Mistral-7B-Instruct-v0.3 \
+  --dataset data/cot_final.jsonl \
+  --output ./fine-tuned-model \
+  --epochs 3 \
+  --batch-size 4 \
+  --max-seq 4096 \
+  --prompt-style cot \
+  --use-flash-attn \
+  --gradient-checkpointing \
+  --use-fused-optimizer \
+  --eval-strategy steps \
+  --eval-steps 100
+
+# Full performance optimization with evaluation
+python3 scripts/train.py \
+  --model mistralai/Mistral-7B-Instruct-v0.3 \
+  --dataset data/cot_final.jsonl \
+  --output ./fine-tuned-model \
+  --epochs 3 \
+  --batch-size 8 \
+  --lr 1e-4 \
+  --gradient-checkpointing \
+  --use-fused-optimizer
+```
+
 ### Generate Dataset from Repo
 ```bash
 python repo2dataset.py --repo <GITHUB_URL> --output dataset.jsonl --workers 8 --include-discussions
@@ -76,8 +105,25 @@ python -m vllm.entrypoints.openai.api_server --model ./fine-tuned-model --device
 
 ### Testing
 ```bash
-# Run evaluation tests
-python scripts/evaluate.py --model ./fine-tuned-model --test-set test_set.jsonl
+# Run evaluation with pass@k metrics
+python scripts/evaluate.py \
+  --model ./fine-tuned-model \
+  --benchmark all \
+  --pass-at-k 10 \
+  --num-generations 10
+
+# Compare with base model
+python scripts/evaluate.py \
+  --model ./fine-tuned-model \
+  --benchmark humaneval \
+  --compare-base \
+  --pass-at-k 10
+
+# Custom test set evaluation
+python scripts/evaluate.py \
+  --model ./fine-tuned-model \
+  --benchmark custom \
+  --test-set data/test_set.jsonl
 ```
 
 ---

@@ -4,6 +4,7 @@ accelerate
 peft
 datasets
 optimum
+optimum-amd
 sentencepiece
 sentence-transformers
 faiss-cpu
@@ -15,3 +16,9 @@ requests
 tqdm
 bitsandbytes
 scikit-learn
+numpy
+scipy
+tensorboard
+wandb
+pytest
+pytest-cov
