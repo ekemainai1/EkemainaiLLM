@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train Mistral 7B with QLoRA on ROCm/AMD using optimum-amd for maximum performance."""
+"""Train Mistral 7B with QLoRA on ROCm/AMD with high-performance optimizations."""
 import os
 import sys
 import argparse
@@ -21,8 +21,6 @@ from peft import (
     TaskType,
 )
 from datasets import load_dataset
-from optimum.amd import ROCmTrainer as TrainerBase
-from optimum.amd.utils import configure_amd_optimizer, configure_amd_dataloader
 
 
 def get_args():

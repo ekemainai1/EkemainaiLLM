@@ -4,11 +4,9 @@ accelerate
 peft
 datasets
 optimum
-optimum-amd
 sentencepiece
 sentence-transformers
 faiss-cpu
-#vllm
 fastapi
 uvicorn
 gradio
