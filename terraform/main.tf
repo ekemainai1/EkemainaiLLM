@@ -31,44 +31,38 @@ variable "preferred_regions" {
   default     = ["atl1", "nyc1", "sfo2", "ams3", "sgp1"]
 }
 
-# Query available GPU sizes from DigitalOcean API
-data "external" "available_gpu" {
-  program = ["bash", "-c", <<EOT
-curl -s -H "Authorization: Bearer $TF_VAR_do_token" \
-  "https://api.digitalocean.com/v2/sizes?per_page=200" \
-  | jq -r '.sizes[] | select(.memory >= 190000) | "\(.slug) \(.regions | join(","))"'
-EOT
-  ]
+# Query all available sizes from DigitalOcean API
+data "http" "do_sizes" {
+  url = "https://api.digitalocean.com/v2/sizes?per_page=200"
+  request_headers = {
+    Authorization = "Bearer ${var.do_token}"
+  }
 }
 
-# Find first available GPU in preferred regions
+# Parse and filter for GPU sizes
 locals {
-  available_gpus = { for line in split("\n", data.external.available_gpu.result) : 
-    split(" ", line)[0] => split(",", split(" ", line)[1]) 
-    if length(split(" ", line)) > 1
-  }
+  all_sizes  = jsondecode(data.http.do_sizes.body).sizes
+  gpu_sizes  = [for s in local.all_sizes : s if s.memory >= 190000]
   
-  # Find GPU that exists in preferred regions
-  selected = {
-    for region in var.preferred_regions :
-    region => [for size in keys(local.available_gpus) : size if contains(local.available_gpus[size], region)]
-    if length([for size in keys(local.available_gpus) : size if contains(local.available_gpus[size], region)]) > 0
-  }
+  # Find first GPU available in preferred regions
+  droplet_config = length(local.gpu_sizes) > 0 ? {
+    region = [for r in var.preferred_regions : r if contains(local.gpu_sizes[0].regions, r)][0]
+    size   = local.gpu_sizes[0].slug
+  } : null
   
-  selected_region = keys(local.selected)[0]
-  selected_size  = local.selected[local.selected_region][0]
-  
-  droplet_config = {
-    region = local.selected_region
-    size   = local.selected_size
+  # Fallback if no GPU found - use default
+  final_config = local.droplet_config != null ? local.droplet_config : {
+    region = "nyc1"
+    size   = "s-4vcpu-8gb"
   }
 }
 
 # Single GPU Droplet
 resource "digitalocean_droplet" "gpu_training" {
+  count    = local.droplet_config != null ? 1 : 0
   name     = "gpu-training-${formatdate("YYYYMMDD", timestamp())}"
-  region   = local.droplet_config.region
-  size     = local.droplet_config.size
+  region   = local.final_config.region
+  size     = local.final_config.size
   image    = "ubuntu-22-04-x64"
   backups  = false
 
@@ -79,8 +73,8 @@ resource "digitalocean_droplet" "gpu_training" {
 set -e
 
 echo "=== GPU Training Node ==="
-echo "Region: ${local.droplet_config.region}"
-echo "Size: ${local.droplet_config.size}"
+echo "Region: ${local.final_config.region}"
+echo "Size: ${local.final_config.size}"
 
 # Update and install basics
 apt-get update
@@ -92,7 +86,6 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm
 # Install training dependencies
 pip3 install transformers accelerate peft datasets sentencepiece || true
 
-# Clone repository
 echo "=== Setup Complete ==="
 EOF
 
@@ -106,13 +99,10 @@ EOF
 # Outputs
 output "droplet_ip" {
   description = "GPU Droplet IP"
-  value       = digitalocean_droplet.gpu_training.ipv4_address
+  value       = length(digitalocean_droplet.gpu_training) > 0 ? digitalocean_droplet.gpu_training[0].ipv4_address : "none"
 }
 
 output "gpu_info" {
   description = "GPU configuration"
-  value       = {
-    region = local.droplet_config.region
-    size   = local.droplet_config.size
-  }
+  value       = local.final_config
 }
