@@ -152,7 +152,7 @@ resource "digitalocean_volume" "training_data" {
   count      = var.enable_volume ? 1 : 0
   name       = "training-data-${formatdate("YYYYMMDD", timestamp())}"
   region     = var.region
-  size_gigabytes = 100
+  size       = "100gi"
   description = "Training data volume"
   
   tags = ["training-data"]
@@ -167,7 +167,7 @@ variable "enable_volume" {
 # Outputs
 output "droplet_ip" {
   description = "Primary GPU Droplet IP"
-  value       = digitalocean_droplet.mi300x_single[0].ipv4_address
+  value       = digitalocean_droplet.mi300x_single.ipv4_address
 }
 
 output "cluster_ips" {
@@ -178,9 +178,9 @@ output "cluster_ips" {
 output "gpu_info" {
   description = "GPU configuration"
   value       = {
-    slug       = digitalocean_droplet.mi300x_single[0].size
-    vcpus      = digitalocean_droplet.mi300x_single[0].vcpus
-    memory_gb = digitalocean_droplet.mi300x_single[0].memory / 1024
+    slug       = digitalocean_droplet.mi300x_single.size
+    vcpus      = digitalocean_droplet.mi300x_single.vcpus
+    memory_gb = digitalocean_droplet.mi300x_single.memory / 1024
   }
 }
 
