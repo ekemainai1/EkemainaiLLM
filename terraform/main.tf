@@ -33,15 +33,12 @@ variable "preferred_regions" {
 
 # Query available GPU sizes from DigitalOcean API
 data "external" "available_gpu" {
-  program = ["bash", "-lc", <<EOT
-curl -s -H "Authorization: Bearer $DO_TOKEN" \
+  program = ["bash", "-c", <<EOT
+curl -s -H "Authorization: Bearer $TF_VAR_do_token" \
   "https://api.digitalocean.com/v2/sizes?per_page=200" \
   | jq -r '.sizes[] | select(.memory >= 190000) | "\(.slug) \(.regions | join(","))"'
 EOT
   ]
-  env = {
-    DO_TOKEN = var.do_token
-  }
 }
 
 # Find first available GPU in preferred regions
