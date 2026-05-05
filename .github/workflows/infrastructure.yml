@@ -62,13 +62,10 @@ jobs:
         fi
         ls -la terraform/
 
-    - name: Install Terraform
-      run: |
-        rm -f /usr/local/bin/terraform
-        wget -q https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
-        unzip -o -q terraform_${TF_VERSION}_linux_amd64.zip
-        mv terraform /usr/local/bin/
-        terraform version
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
 
     - name: Prepare Terraform variables
       id: tf-vars
