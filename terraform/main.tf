@@ -45,22 +45,20 @@ locals {
   all_sizes      = try(local.api_response.sizes, [])
   
   # Filter for GPU sizes - be more inclusive
-  gpu_sizes = length(local.all_sizes) > 0 ? [for s in local.all_sizes : s if s.vcpus >= 8 && contains(s.slug, "gpu")] : []
+  gpu_sizes = [for s in local.all_sizes : s if s.vcpus >= 8 && contains(s.slug, "gpu")]
   
-  # Find first GPU available (simplified - use first GPU and first preferred region)
-  first_gpu = length(local.gpu_sizes) > 0 ? local.gpu_sizes[0] : null
-  droplet_config = first_gpu != null ? {
-    region = var.preferred_regions[0]
-    size   = first_gpu.slug
-  } : null
+  # Use first GPU if available, otherwise null
+  gpu_available = length(local.gpu_sizes) > 0
+  selected_size  = local.gpu_available ? local.gpu_sizes[0].slug : "s-4vcpu-8gb"
+  selected_region = local.gpu_available ? var.preferred_regions[0] : "nyc1"
 }
 
 # Single GPU Droplet
 resource "digitalocean_droplet" "gpu_training" {
-  count    = local.droplet_config != null ? 1 : 0
+  count    = local.gpu_available ? 1 : 0
   name     = "gpu-training-${formatdate("YYYYMMDD", timestamp())}"
-  region   = local.droplet_config != null ? local.droplet_config.region : "nyc1"
-  size     = local.droplet_config != null ? local.droplet_config.size : "s-4vcpu-8gb"
+  region   = local.selected_region
+  size     = local.selected_size
   image    = "ubuntu-22-04-x64"
   backups  = false
 
@@ -102,5 +100,5 @@ output "droplet_ip" {
 
 output "gpu_info" {
   description = "GPU configuration"
-  value       = local.droplet_config != null ? local.droplet_config : {region: "nyc1", size: "s-4vcpu-8gb"}
+  value       = {region = local.selected_region, size = local.selected_size}
 }
