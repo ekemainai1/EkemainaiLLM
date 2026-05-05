@@ -39,10 +39,11 @@ data "http" "do_sizes" {
   }
 }
 
-# Parse and filter for GPU sizes
+# Parse and filter for GPU sizes - with error handling
 locals {
-  all_sizes  = jsondecode(data.http.do_sizes.body).sizes
-  gpu_sizes  = [for s in local.all_sizes : s if s.memory >= 190000]
+  api_response = try(jsondecode(data.http.do_sizes.body), {sizes: []})
+  all_sizes    = try(local.api_response.sizes, [])
+  gpu_sizes    = [for s in local.all_sizes : s if s.memory >= 190000]
   
   # Find first GPU available in preferred regions
   droplet_config = length(local.gpu_sizes) > 0 ? {
