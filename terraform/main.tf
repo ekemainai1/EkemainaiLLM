@@ -31,6 +31,19 @@ variable "preferred_regions" {
   default     = ["atl1", "nyc1", "sfo2", "ams3", "sgp1"]
 }
 
+variable "preferred_sizes" {
+  description = "Preferred GPU sizes in priority order"
+  type        = list(string)
+  default = [
+    "gpu-mi300x1-192gb",
+    "gpu-h100x1-80gb",
+    "gpu-h200x1-141gb",
+    "gpu-6000adax1-48gb",
+    "gpu-l40sx1-48gb",
+    "gpu-4000adax1-20gb"
+  ]
+}
+
 # Query all available sizes from DigitalOcean API
 data "http" "do_sizes" {
   url = "https://api.digitalocean.com/v2/sizes?per_page=200"
@@ -43,14 +56,40 @@ data "http" "do_sizes" {
 locals {
   api_response   = try(jsondecode(data.http.do_sizes.response_body), {sizes: []})
   all_sizes      = try(local.api_response.sizes, [])
-  
-  # Filter for GPU sizes - be more inclusive
-  gpu_sizes = [for s in local.all_sizes : s if s.vcpus >= 8 && strcontains(s.slug, "gpu")]
-  
-  # Use first GPU if available, otherwise null
-  gpu_available = length(local.gpu_sizes) > 0
-  selected_size  = local.gpu_available ? local.gpu_sizes[0].slug : "s-4vcpu-8gb"
-  selected_region = local.gpu_available ? var.preferred_regions[0] : "nyc1"
+
+  # GPU sizes discovered from API
+  gpu_sizes = [for s in local.all_sizes : s if strcontains(s.slug, "gpu")]
+  gpu_by_slug = { for s in local.gpu_sizes : s.slug => s }
+
+  # First pass: preferred size + preferred region
+  preferred_combos = flatten([
+    for sz in var.preferred_sizes : [
+      for rg in var.preferred_regions : {
+        size   = sz
+        region = rg
+      }
+      if contains(keys(local.gpu_by_slug), sz) && contains(local.gpu_by_slug[sz].regions, rg)
+    ]
+  ])
+
+  # Fallback pass: any discovered GPU in preferred regions
+  fallback_combos = flatten([
+    for s in local.gpu_sizes : [
+      for rg in var.preferred_regions : {
+        size   = s.slug
+        region = rg
+      }
+      if contains(s.regions, rg)
+    ]
+  ])
+
+  selected_combo = length(local.preferred_combos) > 0 ? local.preferred_combos[0] : (
+    length(local.fallback_combos) > 0 ? local.fallback_combos[0] : null
+  )
+
+  gpu_available   = local.selected_combo != null
+  selected_size   = local.gpu_available ? local.selected_combo.size : "none"
+  selected_region = local.gpu_available ? local.selected_combo.region : "none"
 }
 
 # Single GPU Droplet
