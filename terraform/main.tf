@@ -45,7 +45,7 @@ locals {
   all_sizes      = try(local.api_response.sizes, [])
   
   # Filter for GPU sizes - be more inclusive
-  gpu_sizes = [for s in local.all_sizes : s if s.vcpus >= 8 && contains(s.slug, "gpu")]
+  gpu_sizes = [for s in local.all_sizes : s if s.vcpus >= 8 && strcontains(s.slug, "gpu")]
   
   # Use first GPU if available, otherwise null
   gpu_available = length(local.gpu_sizes) > 0
