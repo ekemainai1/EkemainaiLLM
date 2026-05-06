@@ -330,20 +330,15 @@ jobs:
         name: datasets
         path: data/
 
-    - name: Setup SSH
-      env:
-        GPU_SSH_PRIVATE_KEY: ${{ secrets.GPU_SSH_PRIVATE_KEY }}
+    - name: Load SSH private key
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.GPU_SSH_PRIVATE_KEY }}
+
+    - name: Setup known_hosts
       run: |
-        set -e
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
-
-        python3 -c 'import os, pathlib; raw=os.environ.get("GPU_SSH_PRIVATE_KEY", ""); assert raw, "GPU_SSH_PRIVATE_KEY is empty"; key=raw.replace("\r", "").replace("\\n", "\n"); key = key if key.endswith("\n") else key + "\n"; pathlib.Path.home().joinpath(".ssh","id_rsa").write_text(key)'
-
-        chmod 600 ~/.ssh/id_rsa
-        # Validate key is parseable before any SSH command
-        ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null
-
         PORT="${GPU_SSH_PORT:-22}"
         ssh-keyscan -p "$PORT" "$GPU_HOST" >> ~/.ssh/known_hosts
         chmod 644 ~/.ssh/known_hosts
