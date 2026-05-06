@@ -5,6 +5,7 @@ import sys
 import argparse
 from pathlib import Path
 from urllib.parse import urlparse
+import importlib.util
 import torch
 from transformers import (
     AutoModelForCausalLM,
@@ -258,6 +259,16 @@ def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_styl
 def setup_model(model_name, rank, alpha, device, use_4bit=True, use_flash_attn=False, gradient_checkpointing=False):
     print(f"Loading model: {model_name}")
 
+    flash_attn_enabled = False
+    if use_flash_attn and device == "cuda":
+        flash_attn_enabled = importlib.util.find_spec("flash_attn") is not None
+        if not flash_attn_enabled:
+            print("⚠️  flash_attn package not found. Falling back to eager attention.")
+    elif use_flash_attn and device != "cuda":
+        print("⚠️  FlashAttention requested but CUDA/ROCm device not available. Falling back to eager attention.")
+
+    attn_impl = "flash_attention_2" if flash_attn_enabled else "eager"
+
     if use_4bit:
         bnb_config = {
             "load_in_4bit": True,
@@ -270,7 +281,7 @@ def setup_model(model_name, rank, alpha, device, use_4bit=True, use_flash_attn=F
             torch_dtype=torch.bfloat16,
             device_map=device,
             quantization_config=bnb_config,
-            attn_implementation="flash_attention_2" if use_flash_attn else "eager",
+            attn_implementation=attn_impl,
         )
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=gradient_checkpointing)
     else:
@@ -278,7 +289,7 @@ def setup_model(model_name, rank, alpha, device, use_4bit=True, use_flash_attn=F
             model_name,
             torch_dtype=torch.bfloat16,
             device_map=device,
-            attn_implementation="flash_attention_2" if use_flash_attn else "eager",
+            attn_implementation=attn_impl,
         )
 
         if gradient_checkpointing:

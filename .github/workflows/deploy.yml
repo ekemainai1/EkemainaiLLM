@@ -399,7 +399,11 @@ jobs:
           python3 -m venv .venv
           . .venv/bin/activate
           python -m pip install --upgrade pip
+          python -m pip uninstall -y torch torchvision torchaudio || true
+          python -m pip install --index-url https://download.pytorch.org/whl/rocm6.1 torch torchvision
           python -m pip install -r requirements.txt
+
+          python -c "import torch; print('CUDA_AVAILABLE=', torch.cuda.is_available()); print('GPU=', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO_GPU'); import sys; sys.exit(0 if torch.cuda.is_available() else 1)"
 
           python scripts/train.py \
             --model "${{ github.event.inputs.model }}" \
