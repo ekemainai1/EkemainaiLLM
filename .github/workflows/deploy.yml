@@ -314,8 +314,13 @@ jobs:
         region=$(echo "$droplet" | jq -r '.region.slug // ""')
 
         echo "Detected manual droplet: size=$size region=$region"
-        if [ "$size" != "gpu-mi300x1-192gb" ] || [ "$region" != "atl1" ]; then
-          echo "Manual mode requires size=gpu-mi300x1-192gb and region=atl1."
+        case "$size" in
+          gpu-mi300x1-192gb* ) valid_size=true ;;
+          * ) valid_size=false ;;
+        esac
+
+        if [ "$valid_size" != "true" ] || [ "$region" != "atl1" ]; then
+          echo "Manual mode requires size starting with gpu-mi300x1-192gb and region=atl1."
           exit 1
         fi
 
