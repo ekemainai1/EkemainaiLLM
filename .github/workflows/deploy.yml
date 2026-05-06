@@ -350,15 +350,10 @@ jobs:
         echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
 
         if [ -n "$GPU_SSH_PASSPHRASE" ]; then
-          printf '%s\n' '#!/usr/bin/env bash' 'echo "$GPU_SSH_PASSPHRASE"' > /tmp/askpass.sh
-          chmod 700 /tmp/askpass.sh
-          export SSH_ASKPASS=/tmp/askpass.sh
-          export SSH_ASKPASS_REQUIRE=force
-          export DISPLAY=:0
-          setsid -w ssh-add ~/.ssh/id_ci_raw < /dev/null
-        else
-          ssh-add ~/.ssh/id_ci_raw
+          # Remove passphrase non-interactively for CI use
+          ssh-keygen -p -P "$GPU_SSH_PASSPHRASE" -N "" -f ~/.ssh/id_ci_raw > /dev/null
         fi
+        ssh-add ~/.ssh/id_ci_raw
 
         ssh-add -l
 
