@@ -41,6 +41,11 @@ on:
         required: false
         type: boolean
         default: false
+      manual_gpu_only:
+        description: 'Skip infra and train on manual GPU host'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -153,7 +158,7 @@ jobs:
     name: Provision Infrastructure
     runs-on: ubuntu-latest
     needs: [test, dataset]
-    if: ${{ github.event.inputs.provision_infra == 'true' && (github.event.inputs.run_tests != 'true' || needs.test.result == 'success') }}
+    if: ${{ github.event.inputs.manual_gpu_only != 'true' && github.event.inputs.provision_infra == 'true' && (github.event.inputs.run_tests != 'true' || needs.test.result == 'success') }}
     environment: infrastructure
     permissions:
       contents: write
@@ -207,7 +212,7 @@ jobs:
     name: Train Model
     runs-on: ubuntu-latest
     needs: [dataset, provision]
-    if: ${{ github.event.inputs.skip_training != 'true' }}
+    if: ${{ github.event.inputs.skip_training != 'true' && github.event.inputs.manual_gpu_only != 'true' }}
     env:
       PYTHONPATH: ${{ github.workspace }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -261,9 +266,93 @@ jobs:
           *.log
         retention-days: 30
 
+  train_manual:
+    name: Train Model (Manual GPU)
+    runs-on: ubuntu-latest
+    needs: [dataset]
+    if: ${{ github.event.inputs.skip_training != 'true' && github.event.inputs.manual_gpu_only == 'true' }}
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GPU_HOST: ${{ secrets.GPU_HOST }}
+      GPU_USER: ${{ secrets.GPU_USER }}
+      GPU_SSH_PORT: ${{ secrets.GPU_SSH_PORT }}
+      DATASET_PATH: ${{ needs.dataset.outputs.dataset_path }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Validate manual GPU secrets
+      run: |
+        if [ -z "$GPU_HOST" ]; then
+          echo "Missing required secret: GPU_HOST"
+          exit 1
+        fi
+        if [ -z "${{ secrets.GPU_SSH_PRIVATE_KEY }}" ]; then
+          echo "Missing required secret: GPU_SSH_PRIVATE_KEY"
+          exit 1
+        fi
+
+    - name: Download datasets
+      uses: actions/download-artifact@v4
+      with:
+        name: datasets
+        path: data/
+
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        printf '%s\n' "${{ secrets.GPU_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        PORT="${GPU_SSH_PORT:-22}"
+        ssh-keyscan -p "$PORT" "$GPU_HOST" >> ~/.ssh/known_hosts
+
+    - name: Prepare remote workspace
+      run: |
+        PORT="${GPU_SSH_PORT:-22}"
+        USERNAME="${GPU_USER:-root}"
+        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "if [ ! -d ~/EkemainaiLLM ]; then git clone https://github.com/${{ github.repository }}.git ~/EkemainaiLLM; else cd ~/EkemainaiLLM && git pull; fi"
+
+    - name: Upload selected dataset to GPU host
+      run: |
+        PORT="${GPU_SSH_PORT:-22}"
+        USERNAME="${GPU_USER:-root}"
+        mkdir -p "$(dirname "$DATASET_PATH")"
+        if [ ! -f "$DATASET_PATH" ]; then
+          echo "Dataset not found: $DATASET_PATH"
+          ls -la data || true
+          exit 1
+        fi
+        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "mkdir -p ~/EkemainaiLLM/data"
+        scp -P "$PORT" "$DATASET_PATH" "$USERNAME@$GPU_HOST:~/EkemainaiLLM/$DATASET_PATH"
+
+    - name: Run training on manual GPU host
+      run: |
+        PORT="${GPU_SSH_PORT:-22}"
+        USERNAME="${GPU_USER:-root}"
+        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "set -e; cd ~/EkemainaiLLM; python3 -m pip install -q -r requirements.txt; python3 scripts/train.py --model '${{ github.event.inputs.model }}' --dataset '$DATASET_PATH' --output ./fine-tuned-model --epochs ${{ github.event.inputs.epochs }} --batch-size ${{ github.event.inputs.batch_size }} --prompt-style cot"
+
+    - name: Download trained model artifacts
+      run: |
+        PORT="${GPU_SSH_PORT:-22}"
+        USERNAME="${GPU_USER:-root}"
+        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "cd ~/EkemainaiLLM && tar -czf /tmp/fine-tuned-model.tar.gz fine-tuned-model || true"
+        scp -P "$PORT" "$USERNAME@$GPU_HOST:/tmp/fine-tuned-model.tar.gz" ./fine-tuned-model.tar.gz
+        mkdir -p fine-tuned-model
+        tar -xzf ./fine-tuned-model.tar.gz
+
+    - name: Upload model
+      uses: actions/upload-artifact@v4
+      with:
+        name: fine-tuned-model
+        path: fine-tuned-model/
+        retention-days: 30
+
   summary:
     name: Deployment Summary
-    needs: [test, dataset, provision, train]
+    needs: [test, dataset, provision, train, train_manual]
     if: always()
     runs-on: ubuntu-latest
     
@@ -277,7 +366,8 @@ jobs:
         echo "| Tests | ${{ needs.test.result }} |"
         echo "| Dataset | ${{ needs.dataset.result }} |"
         echo "| Infrastructure | ${{ needs.provision.result }} |"
-        echo "| Training | ${{ needs.train.result }} |"
+        echo "| Training (auto) | ${{ needs.train.result }} |"
+        echo "| Training (manual) | ${{ needs.train_manual.result }} |"
         echo ""
         
         if [ "${{ needs.provision.result }}" == "success" ]; then
@@ -285,7 +375,7 @@ jobs:
           echo "IP: ${{ needs.provision.outputs.droplet_ip }}"
         fi
         
-        if [ "${{ needs.train.result }}" == "success" ]; then
+        if [ "${{ needs.train.result }}" == "success" ] || [ "${{ needs.train_manual.result }}" == "success" ]; then
           echo "### Model Trained"
           echo "Dataset: ${{ needs.dataset.outputs.dataset_path }}"
           echo "Samples: ${{ needs.dataset.outputs.dataset_count }}"
