@@ -196,10 +196,6 @@ jobs:
         cd terraform
         echo "droplet_ip=$(terraform output -raw droplet_ip)" >> $GITHUB_OUTPUT
 
-    - name: Store droplet IP for next job
-      run: |
-        echo "${{ steps.outputs.outputs.droplet_ip }}" > $GITHUB_OUTPUT/droplet_ip.txt
-    
     - name: Upload Terraform state
       uses: actions/upload-artifact@v4
       with:
