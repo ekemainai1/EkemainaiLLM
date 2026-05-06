@@ -274,6 +274,7 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      DO_TOKEN: ${{ secrets.DO_TOKEN }}
       GPU_HOST: ${{ secrets.GPU_HOST }}
       GPU_USER: ${{ secrets.GPU_USER }}
       GPU_SSH_PORT: ${{ secrets.GPU_SSH_PORT }}
@@ -292,6 +293,29 @@ jobs:
         fi
         if [ -z "${{ secrets.GPU_SSH_PRIVATE_KEY }}" ]; then
           echo "Missing required secret: GPU_SSH_PRIVATE_KEY"
+          exit 1
+        fi
+        if [ -z "$DO_TOKEN" ]; then
+          echo "Missing required secret: DO_TOKEN (needed to validate manual droplet type/region)"
+          exit 1
+        fi
+
+    - name: Verify manual droplet is MI300X in atl1
+      run: |
+        set -e
+        response=$(curl -s -H "Authorization: Bearer $DO_TOKEN" "https://api.digitalocean.com/v2/droplets?per_page=200")
+        droplet=$(echo "$response" | jq -c --arg ip "$GPU_HOST" '.droplets[] | select(any(.networks.v4[]?; .ip_address == $ip))' | head -n1)
+        if [ -z "$droplet" ]; then
+          echo "Could not find droplet with public IP $GPU_HOST in this DigitalOcean account/token."
+          exit 1
+        fi
+
+        size=$(echo "$droplet" | jq -r '.size_slug // .size.slug // ""')
+        region=$(echo "$droplet" | jq -r '.region.slug // ""')
+
+        echo "Detected manual droplet: size=$size region=$region"
+        if [ "$size" != "gpu-mi300x1-192gb" ] || [ "$region" != "atl1" ]; then
+          echo "Manual mode requires size=gpu-mi300x1-192gb and region=atl1."
           exit 1
         fi
 
