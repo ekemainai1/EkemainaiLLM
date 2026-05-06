@@ -54,11 +54,11 @@ data "http" "do_sizes" {
 
 # Parse and filter for GPU sizes - with error handling
 locals {
-  api_response   = try(jsondecode(data.http.do_sizes.response_body), {sizes: []})
-  all_sizes      = try(local.api_response.sizes, [])
+  api_response = try(jsondecode(data.http.do_sizes.response_body), { sizes : [] })
+  all_sizes    = try(local.api_response.sizes, [])
 
   # GPU sizes discovered from API
-  gpu_sizes = [for s in local.all_sizes : s if strcontains(s.slug, "gpu")]
+  gpu_sizes   = [for s in local.all_sizes : s if strcontains(s.slug, "gpu")]
   gpu_by_slug = { for s in local.gpu_sizes : s.slug => s }
 
   # First pass: preferred size + preferred region
@@ -83,8 +83,30 @@ locals {
     ]
   ])
 
+  # Fallback pass 2: preferred size in any available region
+  preferred_size_any_region_combos = [
+    for sz in var.preferred_sizes : {
+      size   = sz
+      region = local.gpu_by_slug[sz].regions[0]
+    }
+    if contains(keys(local.gpu_by_slug), sz) && length(local.gpu_by_slug[sz].regions) > 0
+  ]
+
+  # Fallback pass 3: any GPU in any available region
+  any_gpu_any_region_combos = [
+    for s in local.gpu_sizes : {
+      size   = s.slug
+      region = s.regions[0]
+    }
+    if length(s.regions) > 0
+  ]
+
   selected_combo = length(local.preferred_combos) > 0 ? local.preferred_combos[0] : (
-    length(local.fallback_combos) > 0 ? local.fallback_combos[0] : null
+    length(local.fallback_combos) > 0 ? local.fallback_combos[0] : (
+      length(local.preferred_size_any_region_combos) > 0 ? local.preferred_size_any_region_combos[0] : (
+        length(local.any_gpu_any_region_combos) > 0 ? local.any_gpu_any_region_combos[0] : null
+      )
+    )
   )
 
   gpu_available   = local.selected_combo != null
@@ -94,12 +116,12 @@ locals {
 
 # Single GPU Droplet
 resource "digitalocean_droplet" "gpu_training" {
-  count    = local.gpu_available ? 1 : 0
-  name     = "gpu-training-${formatdate("YYYYMMDD", timestamp())}"
-  region   = local.selected_region
-  size     = local.selected_size
-  image    = "ubuntu-22-04-x64"
-  backups  = false
+  count   = local.gpu_available ? 1 : 0
+  name    = "gpu-training-${formatdate("YYYYMMDD", timestamp())}"
+  region  = local.selected_region
+  size    = local.selected_size
+  image   = "ubuntu-22-04-x64"
+  backups = false
 
   ssh_keys = [var.ssh_key_fingerprint]
 
@@ -139,5 +161,11 @@ output "droplet_ip" {
 
 output "gpu_info" {
   description = "GPU configuration"
-  value       = {region = local.selected_region, size = local.selected_size}
+  value = {
+    region                     = local.selected_region
+    size                       = local.selected_size
+    discovered_gpu_count       = length(local.gpu_sizes)
+    preferred_combo_count      = length(local.preferred_combos)
+    preferred_region_combo_cnt = length(local.fallback_combos)
+  }
 }
