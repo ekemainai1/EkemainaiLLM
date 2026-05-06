@@ -384,7 +384,33 @@ jobs:
       run: |
         PORT="${GPU_SSH_PORT:-22}"
         USERNAME="${GPU_USER:-root}"
-        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "set -e; cd ~/EkemainaiLLM; python3 -m venv .venv; . .venv/bin/activate; python -m pip install -q --upgrade pip; python -m pip install -q -r requirements.txt; python scripts/train.py --model '${{ github.event.inputs.model }}' --dataset '$DATASET_PATH' --output ./fine-tuned-model --epochs ${{ github.event.inputs.epochs }} --batch-size ${{ github.event.inputs.batch_size }} --prompt-style cot"
+        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "bash -lc '
+          set -euxo pipefail
+          cd ~/EkemainaiLLM
+
+          if ! python3 -m venv --help >/dev/null 2>&1; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y python3-venv python3-pip
+            else
+              apt-get update
+              apt-get install -y python3-venv python3-pip
+            fi
+          fi
+
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+          python scripts/train.py \
+            --model "${{ github.event.inputs.model }}" \
+            --dataset "$DATASET_PATH" \
+            --output ./fine-tuned-model \
+            --epochs ${{ github.event.inputs.epochs }} \
+            --batch-size ${{ github.event.inputs.batch_size }} \
+            --prompt-style cot
+        '"
 
     - name: Download trained model artifacts
       run: |
