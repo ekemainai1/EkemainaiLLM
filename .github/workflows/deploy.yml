@@ -278,6 +278,7 @@ jobs:
       GPU_HOST: ${{ secrets.GPU_HOST }}
       GPU_USER: ${{ secrets.GPU_USER }}
       GPU_SSH_PORT: ${{ secrets.GPU_SSH_PORT }}
+      GPU_SSH_PASSPHRASE: ${{ secrets.GPU_SSH_PASSPHRASE }}
       DATASET_PATH: ${{ needs.dataset.outputs.dataset_path }}
 
     steps:
@@ -330,15 +331,37 @@ jobs:
         name: datasets
         path: data/
 
-    - name: Load SSH private key
-      uses: webfactory/ssh-agent@v0.9.0
-      with:
-        ssh-private-key: ${{ secrets.GPU_SSH_PRIVATE_KEY }}
-
-    - name: Setup known_hosts
+    - name: Setup SSH agent (supports encrypted & unencrypted keys)
+      env:
+        GPU_SSH_PRIVATE_KEY: ${{ secrets.GPU_SSH_PRIVATE_KEY }}
       run: |
+        set -e
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
+
+        printf '%s\n' "$GPU_SSH_PRIVATE_KEY" > ~/.ssh/id_ci_raw
+        chmod 600 ~/.ssh/id_ci_raw
+
+        # Normalize CRLF and literal \n formats
+        python3 -c "from pathlib import Path; p=Path.home()/'.ssh'/'id_ci_raw'; txt=p.read_text().replace('\\r',''); txt=txt.replace('\\\\n','\\n') if '\\\\n' in txt else txt; txt = txt if txt.endswith('\\n') else txt+'\\n'; p.write_text(txt)"
+
+        eval "$(ssh-agent -s)"
+        echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+        echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+        if [ -n "$GPU_SSH_PASSPHRASE" ]; then
+          printf '%s\n' '#!/usr/bin/env bash' 'echo "$GPU_SSH_PASSPHRASE"' > /tmp/askpass.sh
+          chmod 700 /tmp/askpass.sh
+          export SSH_ASKPASS=/tmp/askpass.sh
+          export SSH_ASKPASS_REQUIRE=force
+          export DISPLAY=:0
+          setsid -w ssh-add ~/.ssh/id_ci_raw < /dev/null
+        else
+          ssh-add ~/.ssh/id_ci_raw
+        fi
+
+        ssh-add -l
+
         PORT="${GPU_SSH_PORT:-22}"
         ssh-keyscan -p "$PORT" "$GPU_HOST" >> ~/.ssh/known_hosts
         chmod 644 ~/.ssh/known_hosts
