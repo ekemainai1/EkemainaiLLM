@@ -4,6 +4,7 @@ import os
 import sys
 import argparse
 from pathlib import Path
+from urllib.parse import urlparse
 import torch
 from transformers import (
     AutoModelForCausalLM,
@@ -158,8 +159,8 @@ def get_args():
     parser.add_argument(
         "--hf-repo",
         type=str,
-        default=None,
-        help="HuggingFace repo ID to upload model (e.g., 'username/Ekemainai'). Requires HF_TOKEN env var."
+        default="https://huggingface.co/Ekemainai12",
+        help="HuggingFace repo target. Accepts repo ID ('user/model') or URL ('https://huggingface.co/user[/model]'). Requires HF_TOKEN env var."
     )
     parser.add_argument(
         "--model-name",
@@ -168,6 +169,26 @@ def get_args():
         help="Name of the fine-tuned model for upload metadata"
     )
     return parser.parse_args()
+
+
+def resolve_hf_repo(repo_target: str, model_name: str) -> str:
+    """Normalize HF target into repo_id format: namespace/model."""
+    if not repo_target:
+        return ""
+
+    target = repo_target.strip().rstrip("/")
+
+    if target.startswith("http://") or target.startswith("https://"):
+        parsed = urlparse(target)
+        parts = [p for p in parsed.path.split("/") if p]
+    else:
+        parts = [p for p in target.split("/") if p]
+
+    if len(parts) == 1:
+        return f"{parts[0]}/{model_name}"
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return ""
 
 
 PROMPT_TEMPLATES = {
@@ -461,19 +482,23 @@ def main():
 
     if args.hf_repo:
         hf_token = os.getenv("HF_TOKEN")
-        if hf_token:
-            print(f"\n📤 Uploading model to HuggingFace Hub: {args.hf_repo}")
+        repo_id = resolve_hf_repo(args.hf_repo, args.model_name)
+        if not repo_id:
+            print("\n⚠️  Invalid HuggingFace repo target. Skipping upload.")
+            print("   Use format: user/model or https://huggingface.co/user[/model]")
+        elif hf_token:
+            print(f"\n📤 Uploading model to HuggingFace Hub: {repo_id}")
             try:
                 api = HfApi(token=hf_token)
-                create_repo(args.hf_repo, repo_type="model", exist_ok=True, token=hf_token)
+                create_repo(repo_id, repo_type="model", exist_ok=True, token=hf_token)
                 api.upload_folder(
                     folder_path=args.output,
-                    repo_id=args.hf_repo,
+                    repo_id=repo_id,
                     repo_type="model",
                     token=hf_token,
                     commit_message=f"Upload {args.model_name} fine-tuned model"
                 )
-                print(f"✅ Model uploaded to: https://huggingface.co/{args.hf_repo}")
+                print(f"✅ Model uploaded to: https://huggingface.co/{repo_id}")
             except Exception as e:
                 print(f"⚠️  HuggingFace upload failed: {e}")
                 print("   Model saved locally but not uploaded to HuggingFace Hub")
