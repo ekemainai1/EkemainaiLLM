@@ -44,6 +44,18 @@ variable "preferred_sizes" {
   ]
 }
 
+variable "force_region" {
+  description = "Force a specific region first (set null to disable force)"
+  type        = string
+  default     = "atl1"
+}
+
+variable "force_size" {
+  description = "Force a specific size first (set null to disable force)"
+  type        = string
+  default     = "gpu-mi300x1-192gb"
+}
+
 # Query all available sizes from DigitalOcean API
 data "http" "do_sizes" {
   url = "https://api.digitalocean.com/v2/sizes?per_page=200"
@@ -101,10 +113,20 @@ locals {
     if length(s.regions) > 0
   ]
 
-  selected_combo = length(local.preferred_combos) > 0 ? local.preferred_combos[0] : (
-    length(local.fallback_combos) > 0 ? local.fallback_combos[0] : (
-      length(local.preferred_size_any_region_combos) > 0 ? local.preferred_size_any_region_combos[0] : (
-        length(local.any_gpu_any_region_combos) > 0 ? local.any_gpu_any_region_combos[0] : null
+  # Forced combo (if configured and valid for account/region visibility)
+  force_requested = var.force_region != null && var.force_size != null
+  force_valid     = local.force_requested && contains(keys(local.gpu_by_slug), var.force_size) && contains(local.gpu_by_slug[var.force_size].regions, var.force_region)
+  force_combo = local.force_valid ? {
+    size   = var.force_size
+    region = var.force_region
+  } : null
+
+  selected_combo = local.force_combo != null ? local.force_combo : (
+    length(local.preferred_combos) > 0 ? local.preferred_combos[0] : (
+      length(local.fallback_combos) > 0 ? local.fallback_combos[0] : (
+        length(local.preferred_size_any_region_combos) > 0 ? local.preferred_size_any_region_combos[0] : (
+          length(local.any_gpu_any_region_combos) > 0 ? local.any_gpu_any_region_combos[0] : null
+        )
       )
     )
   )
@@ -164,6 +186,8 @@ output "gpu_info" {
   value = {
     region                     = local.selected_region
     size                       = local.selected_size
+    force_requested            = local.force_requested
+    force_valid                = local.force_valid
     discovered_gpu_count       = length(local.gpu_sizes)
     preferred_combo_count      = length(local.preferred_combos)
     preferred_region_combo_cnt = length(local.fallback_combos)
