@@ -246,7 +246,7 @@ def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_styl
     ds = ds.map(wrapped, remove_columns=ds.column_names, desc="Tokenizing")
 
     ds = ds.filter(
-        lambda x: x["labels"][0] != tokenizer.pad_token_id,
+        lambda x: x["labels"][0].item() != tokenizer.pad_token_id,
         desc="Filtering empty samples"
     )
 
