@@ -431,8 +431,8 @@ def main():
         bf16=True,
         optim="adamw_torch_fused" if args.use_fused_optimizer else "paged_adamw_8bit",
         report_to="none",
-        save_total_limit=3,
-        dataloader_num_workers=4,
+        save_total_limit=2,
+        dataloader_num_workers=2,
         remove_unused_columns=False,
         load_best_model_at_end=False,
         metric_for_best_model="eval_loss",
@@ -441,10 +441,11 @@ def main():
         eval_steps=args.eval_steps if args.eval_strategy != "no" else None,
         eval_accumulation_steps=10,
         max_grad_norm=args.max_grad_norm,
-        dataloader_pin_memory=True,
+        dataloader_pin_memory=False,
         torch_compile=False,
         logging_first_step=True,
-        resume_from_checkpoint=True,
+        ddp_find_unused_parameters=False,
+        ddp_bucket_cap_mb=25,
     )
 
     trainer = PerformanceTrainer(
