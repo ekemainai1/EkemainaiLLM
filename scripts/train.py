@@ -440,7 +440,6 @@ def main():
         eval_strategy=args.eval_strategy,
         eval_steps=args.eval_steps if args.eval_strategy != "no" else None,
         eval_accumulation_steps=10,
-        include_inputs_for_metrics=False,
         max_grad_norm=args.max_grad_norm,
         dataloader_pin_memory=True,
         torch_compile=False,
