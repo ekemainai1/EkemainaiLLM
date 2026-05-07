@@ -417,7 +417,7 @@ def main():
         tokenizer=tokenizer,
         mlm=False,
         dataset_text_field="text",
-        max_length=max_seq,
+        max_length=args.max_seq,
     )
 
     training_args = TrainingArguments(
