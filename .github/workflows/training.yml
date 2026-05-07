@@ -48,8 +48,9 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install -q torch --index-url https://download.pytorch.org/whl/rocm6.1
+        pip install -q torch --index-url https://download.pytorch.org/whl/rocm7.2
         pip install -q transformers accelerate peft datasets sentencepiece
+        pip install -q bitsandbytes
     
     - name: Run training
       env:
