@@ -442,7 +442,6 @@ def main():
         torch_compile=False,
         logging_first_step=True,
         ddp_find_unused_parameters=False,
-        ddp_gradient_as_bucket_view=True,
     )
 
     trainer = PerformanceTrainer(
