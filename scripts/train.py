@@ -341,20 +341,6 @@ class PerformanceTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.training_start_time = None
 
-    def training_step(self, model, inputs):
-        if self.training_start_time is None:
-            self.training_start_time = torch.cuda.Event(enable_timing=True)
-            self.training_end_time = torch.cuda.Event(enable_timing=True)
-        self.training_start_time.record()
-        return super().training_step(model, inputs)
-
-    def _inner_training_step(self, *args, **kwargs):
-        result = super()._inner_training_step(*args, **kwargs)
-        if self.training_end_time is not None:
-            self.training_end_time.record()
-            torch.cuda.synchronize()
-        return result
-
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix: str = "eval"):
         """Enhanced evaluation with detailed metrics."""
         output = super().evaluate(eval_dataset, ignore_keys, metric_key_prefix)
