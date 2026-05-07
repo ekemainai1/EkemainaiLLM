@@ -439,7 +439,7 @@ def main():
         eval_strategy="no",
         max_grad_norm=args.max_grad_norm,
         dataloader_pin_memory=True,
-        torch_compile=True,
+        torch_compile=False,
         logging_first_step=True,
         ddp_find_unused_parameters=False,
     )
