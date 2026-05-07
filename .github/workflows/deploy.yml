@@ -25,7 +25,7 @@ on:
       batch_size:
         description: 'Batch size'
         required: false
-        default: '2'
+        default: '8'
       provision_infra:
         description: 'Provision GPU infrastructure'
         required: false

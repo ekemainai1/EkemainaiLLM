@@ -112,7 +112,7 @@ def get_args():
     parser.add_argument(
         "--gradient-checkpointing",
         action="store_true",
-        default=True,
+        default=False,
         help="Enable gradient checkpointing to save memory"
     )
     parser.add_argument(
@@ -431,20 +431,17 @@ def main():
         optim="adamw_torch_fused" if args.use_fused_optimizer else "paged_adamw_8bit",
         report_to="none",
         save_total_limit=2,
-        dataloader_num_workers=2,
+        dataloader_num_workers=4,
         remove_unused_columns=False,
         load_best_model_at_end=False,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         eval_strategy="no",
-        eval_accumulation_steps=10,
-        per_device_eval_batch_size=1,
         max_grad_norm=args.max_grad_norm,
-        dataloader_pin_memory=False,
-        torch_compile=False,
+        dataloader_pin_memory=True,
+        torch_compile=True,
         logging_first_step=True,
         ddp_find_unused_parameters=False,
-        ddp_bucket_cap_mb=25,
     )
 
     trainer = PerformanceTrainer(
