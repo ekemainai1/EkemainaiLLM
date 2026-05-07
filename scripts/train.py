@@ -216,9 +216,9 @@ def format_sample(sample, tokenizer, max_seq, prompt_style="inst"):
         max_length=max_seq,
         truncation=True,
         padding="max_length",
-        return_tensors=None,
+        return_tensors="pt",
     )
-    result["labels"] = result["input_ids"].copy()
+    result["labels"] = result["input_ids"].clone()
     return result
 
 
