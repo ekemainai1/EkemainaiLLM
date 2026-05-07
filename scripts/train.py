@@ -438,7 +438,6 @@ def main():
         fp16=False,
         bf16=True,
         optim="adamw_torch_fused" if args.use_fused_optimizer else "paged_adamw_8bit",
-        group_by_length=True,
         report_to="none",
         save_total_limit=3,
         dataloader_num_workers=4,
