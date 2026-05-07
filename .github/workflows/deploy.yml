@@ -359,7 +359,11 @@ jobs:
       run: |
         PORT="${GPU_SSH_PORT:-22}"
         USERNAME="${GPU_USER:-root}"
-        ssh -p "$PORT" "$USERNAME@$GPU_HOST" "if [ ! -d ~/EkemainaiLLM ]; then git clone https://github.com/${{ github.repository }}.git ~/EkemainaiLLM; else cd ~/EkemainaiLLM && git pull; fi"
+        ssh -p "$PORT" "$USERNAME@$GPU_HOST" " \
+          if command -v sudo >/dev/null 2>&1; then sudo apt-get install -y git-lfs; else apt-get install -y git-lfs; fi; \
+          git lfs install; \
+          if [ ! -d ~/EkemainaiLLM ]; then git clone https://github.com/${{ github.repository }}.git ~/EkemainaiLLM; else cd ~/EkemainaiLLM && git pull; fi; \
+          cd ~/EkemainaiLLM && git lfs pull"
 
     - name: Run training on manual GPU host (dataset generated on remote)
       run: |
