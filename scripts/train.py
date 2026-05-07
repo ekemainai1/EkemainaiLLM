@@ -199,7 +199,7 @@ PROMPT_TEMPLATES = {
 }
 
 
-def format_sample(sample, tokenizer, max_seq, prompt_style="inst"):
+def format_sample(sample, prompt_style="inst"):
     instruction = sample.get("instruction", "")
     input_text = sample.get("input", "")
     output = sample.get("output", "")
@@ -210,16 +210,7 @@ def format_sample(sample, tokenizer, max_seq, prompt_style="inst"):
         input=input_text,
         output=output
     )
-
-    result = tokenizer(
-        prompt,
-        max_length=max_seq,
-        truncation=True,
-        padding="max_length",
-        return_tensors="pt",
-    )
-    result["labels"] = result["input_ids"].clone()
-    return result
+    return {"text": prompt}
 
 
 def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_style="inst"):
@@ -241,19 +232,20 @@ def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_styl
         print("Detected: Standard dataset")
 
     def wrapped(s):
-        return format_sample(s, tokenizer, max_seq, prompt_style)
+        return format_sample(s, prompt_style)
 
-    ds = ds.map(wrapped, remove_columns=ds.column_names, desc="Tokenizing")
-
-    ds = ds.filter(
-        lambda x: x["labels"][0].item() != tokenizer.pad_token_id,
-        desc="Filtering empty samples"
-    )
+    ds = ds.map(wrapped, remove_columns=ds.column_names, desc="Formatting")
 
     ds = ds.shuffle(seed=seed)
 
-    print(f"After filtering: {len(ds)} samples")
-    return ds.train_test_split(test_size=0.05)
+    print(f"Dataset size: {len(ds)} samples")
+    
+    split = ds.train_test_split(test_size=0.05)
+    train_ds = split["train"]
+    eval_ds = split["test"]
+    
+    print(f"Train: {len(train_ds)}, Eval: {len(eval_ds)}")
+    return train_ds, eval_ds
 
 
 def setup_model(model_name, rank, alpha, device, use_4bit=True, use_flash_attn=False, gradient_checkpointing=False):
@@ -421,7 +413,12 @@ def main():
         args.prompt_style
     )
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+        dataset_text_field="text",
+        max_length=max_seq,
+    )
 
     training_args = TrainingArguments(
         output_dir=args.output,
