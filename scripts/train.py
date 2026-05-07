@@ -199,7 +199,7 @@ PROMPT_TEMPLATES = {
 }
 
 
-def format_sample(sample, prompt_style="inst"):
+def format_sample(sample, tokenizer, max_seq, prompt_style="inst"):
     instruction = sample.get("instruction", "")
     input_text = sample.get("input", "")
     output = sample.get("output", "")
@@ -210,7 +210,18 @@ def format_sample(sample, prompt_style="inst"):
         input=input_text,
         output=output
     )
-    return {"text": prompt}
+    
+    enc = tokenizer(
+        prompt,
+        max_length=max_seq,
+        truncation=True,
+        padding="max_length",
+    )
+    return {
+        "input_ids": enc["input_ids"],
+        "attention_mask": enc["attention_mask"],
+        "labels": enc["input_ids"].copy()
+    }
 
 
 def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_style="inst"):
@@ -232,7 +243,7 @@ def load_tokenize_dataset(dataset_path, tokenizer, max_seq, seed=42, prompt_styl
         print("Detected: Standard dataset")
 
     def wrapped(s):
-        return format_sample(s, prompt_style)
+        return format_sample(s, tokenizer, max_seq, prompt_style)
 
     ds = ds.map(wrapped, remove_columns=ds.column_names, desc="Formatting")
 
@@ -416,8 +427,6 @@ def main():
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
-        dataset_text_field="text",
-        max_length=args.max_seq,
     )
 
     training_args = TrainingArguments(
