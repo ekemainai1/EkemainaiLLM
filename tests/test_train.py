@@ -102,8 +102,7 @@ class TestDatasetFormatting:
         params = list(sig.parameters.keys())
         
         assert "sample" in params
-        assert "tokenizer" in params
-        assert "max_seq" in params
+        assert "prompt_style" in params
     
     def test_sample_with_all_fields(self):
         """Test sample with all fields."""
