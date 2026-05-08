@@ -349,14 +349,14 @@ jobs:
 
         if [ -n "$GPU_SSH_PASSPHRASE" ]; then
           # Remove passphrase non-interactively for CI use
-          ssh-keygen -p -P "$GPU_SSH_PASSPHRASE" -N "" -f ~/.ssh/id_ci_raw > /dev/null
+          ssh-keygen -p -P "$GPU_SSH_PASSPHRASE" -N "" -f ~/.ssh/id_ci_raw > /dev/null 2>&1 || true
         fi
         ssh-add ~/.ssh/id_ci_raw
 
         ssh-add -l
 
         PORT="${GPU_SSH_PORT:-22}"
-        ssh-keyscan -p "$PORT" "$GPU_HOST" >> ~/.ssh/known_hosts
+        timeout 10 ssh-keyscan -p "$PORT" "$GPU_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
         chmod 644 ~/.ssh/known_hosts
 
     - name: Prepare remote workspace
