@@ -413,7 +413,6 @@ def main():
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
-        packing=True,
     )
 
     training_args = TrainingArguments(
