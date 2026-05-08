@@ -64,7 +64,7 @@ def get_args():
     parser.add_argument(
         "--max-seq",
         type=int,
-        default=4096,
+        default=2048,
         help="Maximum sequence length"
     )
     parser.add_argument(
@@ -88,7 +88,7 @@ def get_args():
     parser.add_argument(
         "--grad-accum",
         type=int,
-        default=4,
+        default=2,
         help="Gradient accumulation steps"
     )
     parser.add_argument(
@@ -413,6 +413,7 @@ def main():
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
         mlm=False,
+        packing=True,
     )
 
     training_args = TrainingArguments(
@@ -431,14 +432,14 @@ def main():
         optim="adamw_torch_fused" if args.use_fused_optimizer else "paged_adamw_8bit",
         report_to="none",
         save_total_limit=2,
-        dataloader_num_workers=2,
+        dataloader_num_workers=4,
         remove_unused_columns=False,
         load_best_model_at_end=False,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         eval_strategy="no",
         max_grad_norm=args.max_grad_norm,
-        dataloader_pin_memory=False,
+        dataloader_pin_memory=True,
         torch_compile=False,
         logging_first_step=True,
         ddp_find_unused_parameters=False,
